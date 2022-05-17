@@ -1,11 +1,6 @@
-import os
-import random
-import sys
-import tempfile
 import types
 
 import pandas as pd
-import pytest
 from pycytominer import aggregate, normalize
 from pycytominer.cyto_utils import (
     get_default_compartments,
@@ -15,152 +10,9 @@ from pycytominer.cyto_utils import (
 from pycytominer.cyto_utils.cells import SingleCells, _sqlite_strata_conditions
 from sqlalchemy import create_engine
 
-# referenced from https://github.com/cytomining/pycytominer/blob/master/pycytominer/tests/test_cyto_utils/test_cells.py
-random.seed(123)
-
-
-def build_random_data(
-    compartment="cells",
-    ImageNumber=sorted(["x", "y"] * 50),
-    TableNumber=sorted(["x_hash", "y_hash"] * 50),
-):
-    a_feature = random.sample(range(1, 1000), 100)
-    b_feature = random.sample(range(1, 1000), 100)
-    c_feature = random.sample(range(1, 1000), 100)
-    d_feature = random.sample(range(1, 1000), 100)
-    data_df = pd.DataFrame(
-        {"a": a_feature, "b": b_feature, "c": c_feature, "d": d_feature}
-    ).reset_index(drop=True)
-
-    data_df.columns = [
-        "{}_{}".format(compartment.capitalize(), x) for x in data_df.columns
-    ]
-
-    data_df = data_df.assign(
-        ObjectNumber=list(range(1, 51)) * 2,
-        ImageNumber=ImageNumber,
-        TableNumber=TableNumber,
-    )
-
-    return data_df
-
-
-# Get temporary directory
-tmpdir = tempfile.gettempdir()
-
-# Launch a sqlite connection
-file = "sqlite:///{}/test.sqlite".format(tmpdir)
-
-test_engine = create_engine(file)
-test_conn = test_engine.connect()
-
-# Setup data
-cells_df = build_random_data(compartment="cells")
-cytoplasm_df = build_random_data(compartment="cytoplasm").assign(
-    Cytoplasm_Parent_Cells=(list(range(1, 51)) * 2)[::-1],
-    Cytoplasm_Parent_Nuclei=(list(range(1, 51)) * 2)[::-1],
-)
-nuclei_df = build_random_data(compartment="nuclei")
-image_df = pd.DataFrame(
-    {
-        "TableNumber": ["x_hash", "y_hash"],
-        "ImageNumber": ["x", "y"],
-        "Metadata_Plate": ["plate", "plate"],
-        "Metadata_Well": ["A01", "A02"],
-        "Metadata_Site": [1, 1],
-    }
-)
-
-image_df_additional_features = pd.DataFrame(
-    {
-        "TableNumber": ["x_hash", "y_hash"],
-        "ImageNumber": ["x", "y"],
-        "Metadata_Plate": ["plate", "plate"],
-        "Metadata_Well": ["A01", "A01"],
-        "Metadata_Site": [1, 2],
-        "Count_Cells": [50, 50],
-        "Granularity_1_Mito": [3.0, 4.0],
-        "Texture_Variance_RNA_20_00": [12.0, 14.0],
-        "Texture_InfoMeas2_DNA_5_02": [5.0, 1.0],
-    }
-)
-
-# Ingest data into temporary sqlite file
-image_df.to_sql("image", con=test_engine, index=False, if_exists="replace")
-cells_df.to_sql("cells", con=test_engine, index=False, if_exists="replace")
-cytoplasm_df.to_sql("cytoplasm", con=test_engine, index=False, if_exists="replace")
-nuclei_df.to_sql("nuclei", con=test_engine, index=False, if_exists="replace")
-
-# Create a new table with a fourth compartment
-new_file = "sqlite:///{}/test_new.sqlite".format(tmpdir)
-new_compartment_df = build_random_data(compartment="new")
-
-test_new_engine = create_engine(new_file)
-test_new_conn = test_new_engine.connect()
-
-image_df.to_sql("image", con=test_new_engine, index=False, if_exists="replace")
-cells_df.to_sql("cells", con=test_new_engine, index=False, if_exists="replace")
-new_cytoplasm_df = cytoplasm_df.assign(
-    Cytoplasm_Parent_New=(list(range(1, 51)) * 2)[::-1]
-)
-new_cytoplasm_df.to_sql(
-    "cytoplasm", con=test_new_engine, index=False, if_exists="replace"
-)
-nuclei_df.to_sql("nuclei", con=test_new_engine, index=False, if_exists="replace")
-new_compartment_df.to_sql("new", con=test_new_engine, index=False, if_exists="replace")
-
-new_compartments = ["cells", "cytoplasm", "nuclei", "new"]
-
-new_linking_cols = get_default_linking_cols()
-new_linking_cols["cytoplasm"]["new"] = "Cytoplasm_Parent_New"
-new_linking_cols["new"] = {"cytoplasm": "ObjectNumber"}
-
-# Ingest data with additional image features to temporary sqlite file
-
-image_file = "sqlite:///{}/test_image.sqlite".format(tmpdir)
-
-test_engine_image = create_engine(image_file)
-test_conn_image = test_engine_image.connect()
-
-image_df_additional_features.to_sql(
-    "image", con=test_engine_image, index=False, if_exists="replace"
-)
-cells_df.to_sql("cells", con=test_engine_image, index=False, if_exists="replace")
-cytoplasm_df.to_sql(
-    "cytoplasm", con=test_engine_image, index=False, if_exists="replace"
-)
-nuclei_df.to_sql("nuclei", con=test_engine_image, index=False, if_exists="replace")
-
-# Setup SingleCells Class
-ap = SingleCells(sql_file=file)
-ap_subsample = SingleCells(
-    sql_file=file,
-    subsample_n=2,
-    subsampling_random_state=123,
-)
-ap_new = SingleCells(
-    sql_file=new_file,
-    load_image_data=False,
-    compartments=new_compartments,
-    compartment_linking_cols=new_linking_cols,
-)
-
-ap_image_all_features = SingleCells(
-    sql_file=image_file,
-    add_image_features=True,
-    image_feature_categories=["Count", "Granularity", "Texture"],
-)
-
-ap_image_subset_features = SingleCells(
-    sql_file=image_file,
-    add_image_features=True,
-    image_feature_categories=["Count", "Texture"],
-)
-
-ap_image_count = SingleCells(
-    sql_file=image_file, add_image_features=True, image_feature_categories=["Count"]
-)
-
+# reference https://github.com/cytomining/pycytominer/issues/195
+sql_path = "SQ00014613.sqlite"
+sql_url = f"sqlite:///{sql_path}"
 
 # referenced from https://github.com/cytomining/pycytominer/blob/master/pycytominer/cyto_utils/cells.py
 def merge_single_cells(
@@ -320,7 +172,8 @@ def new_load_compartment(self, compartment):
         Compartment dataframe.
     """
     compartment_query = "select * from {}".format(compartment)  # nosec
-    df = pd.read_sql(sql=compartment_query, con=self.conn)
+    df_chunks = pd.read_sql(sql=compartment_query, con=self.conn, chunksize=100000)
+    df = pd.concat([df_chunk for df_chunk in df_chunks])
     return df
 
 
@@ -329,9 +182,15 @@ def mem_profile_func():
     wrapper function for memory profiling
     """
 
+    sc_p = SingleCells(
+        sql_url,
+        strata=["Image_Metadata_Plate", "Image_Metadata_Well"],
+        image_cols=["TableNumber", "ImageNumber"],
+        fields_of_view_feature=[],
+    )
     # load new_load_compartment as ap's load_compartment function for profiling
-    ap.load_compartment = types.MethodType(new_load_compartment, ap)
-    return merge_single_cells(self=ap)
+    sc_p.load_compartment = types.MethodType(new_load_compartment, sc_p)
+    return merge_single_cells(self=sc_p)
 
 
 mem_profile_func()

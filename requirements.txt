@@ -1,0 +1,10 @@
+pycytominer==0.1
+memray
+memory_profiler
+black
+isort
+pylint
+yamllint
+bandit
+safety
+pytest

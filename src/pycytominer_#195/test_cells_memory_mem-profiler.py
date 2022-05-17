@@ -322,7 +322,7 @@ def new_load_compartment(self, compartment):
     pandas.core.frame.DataFrame
         Compartment dataframe.
     """
-    compartment_query = "select * from {}".format(compartment)
+    compartment_query = "select * from {}".format(compartment)  # nosec
     df = pd.read_sql(sql=compartment_query, con=self.conn)
     return df
 
