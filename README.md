@@ -1,9 +1,13 @@
-# Terraform + Ansible GCP Deployment Template
+# Pycytominer Performance Testing
+
+This repo is intended to assist with peformance testing for [pycytominer](https://github.com/cytomining/pycytominer).
+
+## Deployment
 
 This repo contains terraform and ansible configuration for setting up a single
 VM with a networking layer.
 
-## Prerequisities and Initial Notes
+### Prerequisities and Initial Notes
 
 You'll need to install [Terraform](https://www.terraform.io/) and
 [Ansible](https://www.ansible.com/) prior to using the scripts in this repo.
@@ -19,7 +23,7 @@ service key with Compute Engine create permissions. You should obtain a service
 key with the necessary permissions, name it `sa.json`, and put it in
 `./deployment/.secrets`.
 
-## Usage
+### Usage
 
 Run `./deployment/provision.sh` to first run terraform to provision the
 infrastructure, then ansible to deploy software to it. To perform an unattended
@@ -49,7 +53,7 @@ into your machine with the following command:
 gcloud compute ssh --project=cuhealthai-sandbox --zone=us-central1-a test-sample-vm
 ```
 
-### Cleaning Up
+#### Cleaning Up
 
 When you're done using your resources and want to tear down the infrastructure,
 the following command will destroy the resources and not recreate them (`-na`,
@@ -59,7 +63,7 @@ the following command will destroy the resources and not recreate them (`-na`,
 ./deployment/provision.sh -x -d -na
 ```
 
-## Configuration
+### Configuration
 
 First off, you'll find project-level variables specified in
 `./deployment/terraform/config.tg`. Feel free to modify them in that file, or
