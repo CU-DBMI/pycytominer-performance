@@ -1,0 +1,6 @@
+.venv
+.secrets
+/deployment/ansible/logs
+.terraform
+*.tfstate
+*.tfstate.*
