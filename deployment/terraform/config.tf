@@ -3,7 +3,7 @@
 # ---------------------------------------------------------------------------------------------------
 
 variable "project" {
-    default = "cuhealthai-sandbox"
+  default = "cuhealthai-sandbox"
 }
 
 variable "region" {
@@ -15,14 +15,14 @@ variable "zone" {
 }
 
 variable "credentials_file" {
-    default = "../.secrets/sa.json"
+  default = "../.secrets/sa.json"
 }
 
 variable "resource_prefix" {
-    type = string
-    default = "test-vm-"
-    description = "prefix for all resources' names"
-} 
+  type        = string
+  default     = "pycytominer-performance-"
+  description = "prefix for all resources' names"
+}
 
 terraform {
   required_providers {

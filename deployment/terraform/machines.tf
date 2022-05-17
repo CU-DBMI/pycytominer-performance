@@ -8,7 +8,7 @@ variable "node_image" {
 
 variable "virtual_machines" {
   default = {
-    sample-vm = {
+    vm = {
       // the class + specs of the machine; either choose an existing class or
       // formulate a custom machine class string. for example, for an e2 machine
       // with 6 CPUs and ~3GB of RAM, you'd use "e2-custom-6-3072"
@@ -34,22 +34,22 @@ resource "google_compute_instance" "nodes" {
 
   name         = "${var.resource_prefix}${replace(each.key, "_", "-")}"
   machine_type = each.value.machine_type
-  tags         = try(each.value.tags, []) 
+  tags         = try(each.value.tags, [])
 
   boot_disk {
     initialize_params {
       image = try(each.value.node_image, var.node_image)
-      size = try(each.value.disk_size_gb, 30)
+      size  = try(each.value.disk_size_gb, 30)
     }
   }
 
   metadata = {
-      role = try(each.value.role, "ungrouped")
+    role = try(each.value.role, "ungrouped")
   }
 
   network_interface {
-    network = google_compute_network.network.id
-    subnetwork   = google_compute_subnetwork.subnetwork.id
+    network    = google_compute_network.network.id
+    subnetwork = google_compute_subnetwork.subnetwork.id
 
     access_config {
       nat_ip = try(each.value.external_ip, null)
