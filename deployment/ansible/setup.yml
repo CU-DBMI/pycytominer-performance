@@ -1,12 +1,12 @@
 ---
 - name: Perform initial host setup
   hosts: all
-  become: yes
+  become: true
   gather_facts: false
   tasks:
-  - name: Wait for hosts to come online
-    wait_for_connection:
-      timeout: 800
-  - name: Test echo on all machines
-    shell: |
-      echo "Hello, world!"
+    - name: Wait for hosts to come online
+      wait_for_connection:
+        timeout: 800
+    - name: Test echo on all machines
+      shell: |
+        echo "Hello, world!"

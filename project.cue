@@ -3,16 +3,18 @@ package main
 import (
 	"dagger.io/dagger"
 	"universe.dagger.io/docker"
+	"universe.dagger.io/bash"
 )
 
 dagger.#Plan & {
 
 	client: {
 		filesystem: {
-			"./": read: contents:             dagger.#FS
-			"./src": write: contents:         actions.clean.black.export.directories."/workdir/src"
-			"./project.cue": write: contents: actions.clean.cue.export.files."/workdir/project.cue"
-			"./deployment": write: contents:  actions.clean.terraform.export.directories."/workdir/deployment"
+			"./": read: contents:                      dagger.#FS
+			"./src": write: contents:                  actions.clean.black.export.directories."/workdir/src"
+			"./deployment/ansible": write: contents:   actions.clean.ansible.export.directories."/workdir/deployment/ansible"
+			"./project.cue": write: contents:          actions.clean.cue.export.files."/workdir/project.cue"
+			"./deployment/terraform": write: contents: actions.clean.terraform.export.directories."/workdir/deployment/terraform"
 		}
 
 	}
@@ -42,7 +44,7 @@ dagger.#Plan & {
 					command: {
 						name: "apt"
 						args: ["install", "--no-install-recommends", "-y",
-							"build-essential", "libunwind-dev", "liblz4-dev"]
+							"build-essential", "libunwind-dev", "liblz4-dev", "shellcheck"]
 					}
 				},
 				docker.#Run & {
@@ -164,6 +166,18 @@ dagger.#Plan & {
 					}
 				}
 			}
+			// code formatting with ansible-lint
+			// note we bash.#Run here as `ansiblelint --write` returns stderr
+			ansible: bash.#Run & {
+				input:   black.output
+				workdir: "/workdir"
+				script: contents: "python -m ansiblelint --write /workdir/deployment/ansible || true"
+				export: {
+					directories: {
+						"/workdir/deployment/ansible": _
+					}
+				}
+			}
 			// code formatting for cuelang
 			cue: docker.#Run & {
 				input:   _cue_build.output
@@ -185,10 +199,11 @@ dagger.#Plan & {
 					args: ["-recursive", "/workdir/"]
 				}
 				export: {
-					directories: "/workdir/deployment": _
+					directories: "/workdir/deployment/terraform": _
 				}
 
 			}
+
 		}
 		// linting for formatting and best practices
 		lint: {
@@ -226,6 +241,35 @@ dagger.#Plan & {
 				command: {
 					name: "python"
 					args: ["-m", "bandit", "-r", "src/"]
+				}
+			}
+			// ansible linting
+			ansible: docker.#Run & {
+				input:   bandit.output
+				workdir: "/workdir"
+				command: {
+					name: "python"
+					args: ["-m", "ansiblelint", "-p", "deployment/ansible"]
+				}
+			}
+            // shell script linting
+			shell: docker.#Run & {
+				input:   ansible.output
+				workdir: "/workdir"
+				command: {
+					name: "find"
+					args: ["/workdir", "-name", "*.sh",
+						"-exec", "shellcheck",
+						"{}", "+"]
+				}
+			}
+			// terraform formatting
+			terraform: docker.#Run & {
+				input:   _tf_build.output
+				workdir: "/workdir"
+				command: {
+					name: "fmt"
+					args: ["-check", "-recursive", "/workdir/"]
 				}
 			}
 		}
