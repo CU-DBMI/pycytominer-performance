@@ -44,7 +44,7 @@ dagger.#Plan & {
 					command: {
 						name: "apt"
 						args: ["install", "--no-install-recommends", "-y",
-							"build-essential", "libunwind-dev", "liblz4-dev"]
+							"build-essential", "libunwind-dev", "liblz4-dev", "shellcheck"]
 					}
 				},
 				docker.#Run & {
@@ -250,6 +250,17 @@ dagger.#Plan & {
 				command: {
 					name: "python"
 					args: ["-m", "ansiblelint", "-p", "deployment/ansible"]
+				}
+			}
+            // shell script linting
+			shell: docker.#Run & {
+				input:   ansible.output
+				workdir: "/workdir"
+				command: {
+					name: "find"
+					args: ["/workdir", "-name", "*.sh",
+						"-exec", "shellcheck",
+						"{}", "+"]
 				}
 			}
 			// terraform formatting
