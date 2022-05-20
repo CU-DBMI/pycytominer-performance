@@ -8,3 +8,4 @@ bandit
 safety
 pytest
 ansible-lint
+duckdb
