@@ -4,7 +4,7 @@ import sys
 import tempfile
 import types
 
-import pandas as pd
+
 import pytest
 from pycytominer import aggregate, normalize
 from pycytominer.cyto_utils import (
@@ -14,6 +14,7 @@ from pycytominer.cyto_utils import (
 )
 from pycytominer.cyto_utils.cells import SingleCells, _sqlite_strata_conditions
 from sqlalchemy import create_engine
+import mars.dataframe as pd
 
 # referenced from https://github.com/cytomining/pycytominer/blob/master/pycytominer/tests/test_cyto_utils/test_cells.py
 random.seed(123)
@@ -238,14 +239,14 @@ def merge_single_cells(
                     self.load_compartment(compartment=right_compartment),
                     left_on=self.merge_cols + [left_link_col],
                     right_on=self.merge_cols + [right_link_col],
-                    suffixes=merge_suffix,
+                    suffixes=tuple(merge_suffix),
                 )
             else:
                 sc_df = sc_df.merge(
                     self.load_compartment(compartment=right_compartment),
                     left_on=self.merge_cols + [left_link_col],
                     right_on=self.merge_cols + [right_link_col],
-                    suffixes=merge_suffix,
+                    suffixes=tuple(merge_suffix),
                 )
 
             linking_check_cols.append(linking_check)
@@ -273,11 +274,12 @@ def merge_single_cells(
         self.load_image()
         self.load_image_data = True
 
+    self.image_df = pd.DataFrame(self.image_df)
     sc_df = (
         self.image_df.merge(sc_df, on=self.merge_cols, how="right")
         .rename(self.linking_col_rename, axis="columns")
         .rename(self.full_merge_suffix_rename, axis="columns")
-    ).execute()
+    )
     if single_cell_normalize:
         # Infering features is tricky with non-canonical data
         if normalize_args is None:
