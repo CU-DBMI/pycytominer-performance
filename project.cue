@@ -252,7 +252,7 @@ dagger.#Plan & {
 					args: ["-m", "ansiblelint", "-p", "deployment/ansible"]
 				}
 			}
-            // shell script linting
+			// shell script linting
 			shell: docker.#Run & {
 				input:   ansible.output
 				workdir: "/workdir"
