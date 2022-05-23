@@ -9,3 +9,5 @@ safety
 pytest
 ansible-lint
 duckdb
+connectorx
+numpy
