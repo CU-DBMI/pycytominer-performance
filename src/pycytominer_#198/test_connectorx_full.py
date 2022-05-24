@@ -12,8 +12,8 @@ import connectorx as cx
 
 # reference https://github.com/cytomining/pycytominer/issues/195
 # shrunk file for quicker testing as per work within shrink-demo-file.ipynb
-sql_path = "testing_SQ00014613.sqlite"
-sql_url = "sqlite:///testing_SQ00014613.sqlite"
+sql_path = "SQ00014613.sqlite"
+sql_url = "sqlite:///SQ00014613.sqlite"
 
 # referenced from https://github.com/cytomining/pycytominer/blob/master/pycytominer/cyto_utils/cells.py
 def merge_single_cells(
@@ -191,5 +191,6 @@ def mem_profile_func():
     # load new_load_compartment as ap's load_compartment function for profiling
     sc_p.load_compartment = types.MethodType(new_load_compartment, sc_p)
     return merge_single_cells(self=sc_p)
+
 
 print(mem_profile_func().info())
