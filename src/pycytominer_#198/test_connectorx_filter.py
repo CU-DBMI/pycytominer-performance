@@ -157,9 +157,10 @@ def merge_single_cells(
     else:
         return sc_df
 
+
 def filter_query(compartment: str) -> str:
     """
-    Takes compartment and provides filter string to avoid text 
+    Takes compartment and provides filter string to avoid text
     output from numeric sqlite columns.
     """
     number_types = [
@@ -191,17 +192,17 @@ def filter_query(compartment: str) -> str:
         "CLOB",
     ]
     # create sql-compatible string for sqlite types
-    number_types_str_upper = ",".join(
-    [f"'{name}'" for name in number_types]
-    )
+    number_types_str_upper = ",".join([f"'{name}'" for name in number_types])
 
     text_types_str_lower = ",".join(
         [f"'{name}'" for name in [name.lower() for name in text_types]]
     )
 
     # select column types from compartment table
-    sql = (f"SELECT name, type FROM PRAGMA_TABLE_INFO('{compartment}')"
-            f" where type in ({number_types_str_upper})")
+    sql = (
+        f"SELECT name, type FROM PRAGMA_TABLE_INFO('{compartment}')"
+        f" where type in ({number_types_str_upper})"
+    )
     col_result = cx.read_sql(conn=f"sqlite://{sql_path}", query=sql)
 
     # create a filter query
@@ -214,6 +215,7 @@ def filter_query(compartment: str) -> str:
             filter_query += " and "
 
     return filter_query
+
 
 # referenced from https://github.com/cytomining/pycytominer/blob/master/pycytominer/cyto_utils/cells.py
 def new_load_compartment(self, compartment):
@@ -229,12 +231,15 @@ def new_load_compartment(self, compartment):
     pandas.core.frame.DataFrame
         Compartment dataframe.
     """
-    
+
     compartment_query = filter_query(compartment)
     print(compartment)
-    df = cx.read_sql(conn=f"sqlite://{sql_path}", query=compartment_query, return_type="pandas")
+    df = cx.read_sql(
+        conn=f"sqlite://{sql_path}", query=compartment_query, return_type="pandas"
+    )
 
     return df
+
 
 def mem_profile_func():
     """

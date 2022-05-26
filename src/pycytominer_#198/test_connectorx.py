@@ -173,7 +173,9 @@ def new_load_compartment(self, compartment):
         Compartment dataframe.
     """
     compartment_query = "select * from {}".format(compartment)  # nosec
-    df = cx.read_sql(conn=f"sqlite://{sql_path}", query=compartment_query, return_type="pandas")
+    df = cx.read_sql(
+        conn=f"sqlite://{sql_path}", query=compartment_query, return_type="pandas"
+    )
     return df
 
 
@@ -191,5 +193,6 @@ def mem_profile_func():
     # load new_load_compartment as ap's load_compartment function for profiling
     sc_p.load_compartment = types.MethodType(new_load_compartment, sc_p)
     return merge_single_cells(self=sc_p)
+
 
 print(mem_profile_func().info())

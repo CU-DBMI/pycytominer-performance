@@ -173,7 +173,9 @@ def new_load_compartment(self, compartment):
         Compartment dataframe.
     """
     compartment_query = "select * from {}".format(compartment)  # nosec
-    df = cx.read_sql(conn=f"sqlite://{sql_path}", query=compartment_query, return_type="pandas")
+    df = cx.read_sql(
+        conn=f"sqlite://{sql_path}", query=compartment_query, return_type="pandas"
+    )
     return df
 
 

@@ -11,3 +11,5 @@ ansible-lint
 duckdb
 connectorx
 numpy
+ray
+modin
