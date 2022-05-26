@@ -118,7 +118,9 @@ class new_SingleCells(SingleCells):
 
                 if isinstance(sc_df, str):
                     initial_df = self.load_compartment(compartment=left_compartment)
-
+                    initial_df = initial_df.set_index(
+                        self.merge_cols + [left_link_col], drop=False
+                    )
                     if compute_subsample:
                         # Sample cells proportionally by self.strata
                         self.get_subsample(df=initial_df, rename_col=False)
@@ -131,17 +133,24 @@ class new_SingleCells(SingleCells):
                             initial_df, how="left", on=subset_logic_df.columns.tolist()
                         ).reindex(initial_df.columns, axis="columns")
 
+                    print(self.merge_cols + [left_link_col])
+                    print(self.merge_cols + [right_link_col])
                     sc_df = initial_df.merge(
-                        self.load_compartment(compartment=right_compartment),
-                        left_on=self.merge_cols + [left_link_col],
-                        right_on=self.merge_cols + [right_link_col],
+                        self.load_compartment(compartment=right_compartment).set_index(
+                            self.merge_cols + [right_link_col], drop=False
+                        ),
+                        how="inner",
+                        left_index=True,
+                        right_index=True,
                         suffixes=merge_suffix,
                     )
                 else:
                     sc_df = sc_df.merge(
-                        self.load_compartment(compartment=right_compartment),
-                        left_on=self.merge_cols + [left_link_col],
-                        right_on=self.merge_cols + [right_link_col],
+                        self.load_compartment(compartment=right_compartment).set_index(
+                            self.merge_cols + [right_link_col], drop=False
+                        ),
+                        left_index=True,
+                        right_index=True,
                         suffixes=merge_suffix,
                     )
 
@@ -169,9 +178,10 @@ class new_SingleCells(SingleCells):
         if not self.load_image_data:
             self.load_image()
             self.load_image_data = True
-
+        sc_df = sc_df.set_index(self.merge_cols, drop=False)
+        self.image_df = self.image_df.set_index(self.merge_cols, drop=False)
         sc_df = (
-            self.image_df.merge(sc_df, on=self.merge_cols, how="right")
+            sc_df.merge(self.image_df, how="left", left_index=True, right_index=True)
             .rename(self.linking_col_rename, axis="columns")
             .rename(self.full_merge_suffix_rename, axis="columns")
         )
@@ -214,6 +224,7 @@ class new_SingleCells(SingleCells):
         pandas.core.frame.DataFrame
             Compartment dataframe.
         """
+        print(compartment)
         compartment_query = "select * from {}".format(compartment)  # nosec
         df = modin_pd.read_sql(compartment_query, con=sql_url)
         return df
