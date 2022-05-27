@@ -10,3 +10,23 @@
     - name: Test echo on all machines
       shell: |
         echo "Hello, world!"
+    - name: Install apt pkgs
+      apt:
+        upgrade: yes
+        update_cache: yes
+        pkg:
+        - git
+        - libblas3
+        - liblapack3
+        - liblapack-dev
+        - libblas-dev
+        - gfortran
+        - libatlas-base-dev
+        - python3-pip
+        - build-essential
+        - libssl-dev
+        - libffi-dev
+        - python3-dev
+        - liblz4-dev
+        - libunwind-dev
+        - wget

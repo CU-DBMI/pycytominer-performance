@@ -9,3 +9,7 @@ safety
 pytest
 ansible-lint
 duckdb
+connectorx
+numpy
+ray[default]
+modin[ray]
