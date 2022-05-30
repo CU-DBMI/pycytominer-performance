@@ -12,8 +12,8 @@ from pycytominer.cyto_utils.cells import SingleCells, _sqlite_strata_conditions
 
 # reference https://github.com/cytomining/pycytominer/issues/195
 # shrunk file for quicker testing as per work within shrink-demo-file.ipynb
-sql_path = "testing_SQ00014613.sqlite"
-sql_url = "sqlite:///testing_SQ00014613.sqlite"
+sql_path = "testing_err_fixed_SQ00014613.sqlite"
+sql_url = "sqlite:///testing_err_fixed_SQ00014613.sqlite"
 
 # referenced from https://github.com/cytomining/pycytominer/blob/master/pycytominer/cyto_utils/cells.py
 # a new singlecell class to manage modifications for testing
@@ -92,7 +92,9 @@ class new_SingleCells(SingleCells):
         linking_check_cols = []
         merge_suffix_rename = []
         for left_compartment in self.compartment_linking_cols:
+            print("left compartment")
             for right_compartment in self.compartment_linking_cols[left_compartment]:
+                print("right compartment")
                 # Make sure only one merge per combination occurs
                 linking_check = "-".join(sorted([left_compartment, right_compartment]))
                 if linking_check in linking_check_cols:
@@ -130,25 +132,32 @@ class new_SingleCells(SingleCells):
 
                     print(self.merge_cols + [left_link_col])
                     print(self.merge_cols + [right_link_col])
-                    sc_df = initial_df.merge(
-                        self.load_compartment(compartment=right_compartment).set_index(
+                    right_compartment =  self.load_compartment(compartment=right_compartment).set_index(
                             self.merge_cols + [right_link_col], drop=False
-                        ),
+                    )
+                    sc_df = initial_df.merge(
+                       right_compartment,
                         how="inner",
                         left_index=True,
                         right_index=True,
                         suffixes=merge_suffix,
+                        copy=False
                     )
+                    del right_compartment
                 else:
-                    sc_df = sc_df.merge(
-                        self.load_compartment(compartment=right_compartment).set_index(
+                    print(self.merge_cols + [left_link_col])
+                    print(self.merge_cols + [right_link_col])
+                    right_compartment = self.load_compartment(compartment=right_compartment).set_index(
                             self.merge_cols + [right_link_col], drop=False
-                        ),
+                        )
+                    sc_df = sc_df.merge(
+                        right_compartment,
                         left_index=True,
                         right_index=True,
                         suffixes=merge_suffix,
+                        copy=False
                     )
-
+                    del right_compartment
                 linking_check_cols.append(linking_check)
 
         # Add metadata prefix to merged suffixes
@@ -175,8 +184,10 @@ class new_SingleCells(SingleCells):
             self.load_image_data = True
         sc_df = sc_df.set_index(self.merge_cols, drop=False)
         self.image_df = self.image_df.set_index(self.merge_cols, drop=False)
+        print(self.linking_col_rename)
+        print(self.full_merge_suffix_rename)
         sc_df = (
-            sc_df.merge(self.image_df, how="left", left_index=True, right_index=True)
+            sc_df.merge(self.image_df, how="left", left_index=True, right_index=True, copy=False)
             .rename(self.linking_col_rename, axis="columns")
             .rename(self.full_merge_suffix_rename, axis="columns")
         )
