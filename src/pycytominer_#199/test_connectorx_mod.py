@@ -126,7 +126,7 @@ def merge_single_cells(
         self.load_image()
         self.load_image_data = True
 
-    # combine rename dictionaries to reduce rename load
+    # combine rename dictionaries to reduce resource load
     merge_rename = self.full_merge_suffix_rename.copy()
     for key, val in self.linking_col_rename.items():
         # for every val in linking_col_rename
@@ -134,13 +134,13 @@ def merge_single_cells(
             # if the val exists as a key in full_merge_suffix_rename
             # set a key with the value
             merge_rename[key] = merge_rename[val]
-            # remove the key
+            # remove the key with the previous value name
             merge_rename.pop(val)
 
     print(self.image_df.info())
     print(sc_df.info())
     sc_df = sc_df.merge(self.image_df, on=self.merge_cols, how="left", copy=False)
-    sc_df = sc_df.rename(merge_rename, axis="columns")
+    sc_df = sc_df.rename(merge_rename, axis="columns", copy=False, inplace=False)
     print(sc_df.info())
 
     if single_cell_normalize:
