@@ -132,30 +132,30 @@ class new_SingleCells(SingleCells):
 
                     print(self.merge_cols + [left_link_col])
                     print(self.merge_cols + [right_link_col])
-                    right_compartment =  self.load_compartment(compartment=right_compartment).set_index(
-                            self.merge_cols + [right_link_col], drop=False
-                    )
+                    right_compartment = self.load_compartment(
+                        compartment=right_compartment
+                    ).set_index(self.merge_cols + [right_link_col], drop=False)
                     sc_df = initial_df.merge(
-                       right_compartment,
+                        right_compartment,
                         how="inner",
                         left_index=True,
                         right_index=True,
                         suffixes=merge_suffix,
-                        copy=False
+                        copy=False,
                     )
                     del right_compartment
                 else:
                     print(self.merge_cols + [left_link_col])
                     print(self.merge_cols + [right_link_col])
-                    right_compartment = self.load_compartment(compartment=right_compartment).set_index(
-                            self.merge_cols + [right_link_col], drop=False
-                        )
+                    right_compartment = self.load_compartment(
+                        compartment=right_compartment
+                    ).set_index(self.merge_cols + [right_link_col], drop=False)
                     sc_df = sc_df.merge(
                         right_compartment,
                         left_index=True,
                         right_index=True,
                         suffixes=merge_suffix,
-                        copy=False
+                        copy=False,
                     )
                     del right_compartment
                 linking_check_cols.append(linking_check)
@@ -187,7 +187,9 @@ class new_SingleCells(SingleCells):
         print(self.linking_col_rename)
         print(self.full_merge_suffix_rename)
         sc_df = (
-            sc_df.merge(self.image_df, how="left", left_index=True, right_index=True, copy=False)
+            sc_df.merge(
+                self.image_df, how="left", left_index=True, right_index=True, copy=False
+            )
             .rename(self.linking_col_rename, axis="columns")
             .rename(self.full_merge_suffix_rename, axis="columns")
         )

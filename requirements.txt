@@ -13,3 +13,4 @@ connectorx
 numpy
 ray[default]
 modin[ray]
+scalene
