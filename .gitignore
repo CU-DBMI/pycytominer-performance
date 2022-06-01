@@ -140,6 +140,7 @@ secrets-*.yaml
 .vscode
 dask-worker-space
 *.sqlite
+profile.json
 
 # dagger ignores, as more than dependencies are included
 cue.mod/pkg
