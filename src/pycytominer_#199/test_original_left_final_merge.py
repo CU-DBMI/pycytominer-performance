@@ -131,7 +131,7 @@ class new_SingleCells(SingleCells):
         print(self.image_df.info())
         print(sc_df.info())
         sc_df = (
-            sc_df.merge(self.image_df, on=self.merge_cols, how="left", copy=False)
+            sc_df.merge(self.image_df, on=self.merge_cols, how="left")
             .rename(self.linking_col_rename, axis="columns")
             .rename(self.full_merge_suffix_rename, axis="columns")
         )

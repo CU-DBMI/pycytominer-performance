@@ -140,7 +140,7 @@ class new_SingleCells(SingleCells):
 
         print(self.image_df.info())
         print(sc_df.info())
-        sc_df = sc_df.merge(self.image_df, on=self.merge_cols, how="left", copy=False)
+        sc_df = sc_df.merge(self.image_df, on=self.merge_cols, how="left")
         sc_df = sc_df.rename(merge_rename, axis="columns", copy=False, inplace=False)
         print(sc_df.info())
 
