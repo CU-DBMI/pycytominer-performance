@@ -5,6 +5,23 @@ convert SQLite database files to another format for use within `pycytominer` to 
 
 ## Diagrams
 
+__Working Architecture Sketch__
+
+```mermaid
+flowchart LR
+    sqlite[(*.sqlite file)] --> |extract\ndb schema| tables
+    tables -.->|one-to-many\ntables| read
+    read -.-> data[in-memory\ndata]
+    subgraph Ray Dataset
+        direction LR
+        subgraph Arrow RecordBatches
+            direction LR
+            data
+        end
+    end
+
+```
+
 References from [cytomining/pyctominer#195](https://github.com/cytomining/pycytominer/issues/195)
 
 __General Flow__
@@ -62,6 +79,7 @@ flowchart LR
 - What are the schema expectations for pycytominer and how may we define these upfront?
 - How may merges and other transformational work take place in an efficiently scaled way?
 - How might one take advantage of greater compute capabilities if it were available (while assuming default-case local/portable)?
+- How can we parallelize to scale further than local/native formats may currently allow?
 
 ## Data Type Mapping
 
@@ -72,14 +90,14 @@ Reference:
 - <https://www.sqlite.org/datatype3.html>
 - <https://arrow.apache.org/docs/cpp/api/datatype.html>
 
-Table reference:
+Data Types Reference Table:
 SQLite Type | Arrow Type
 --- | ---
-INTEGER |
-REAL |
-TEXT |
-BLOB |
-NULL |
+INTEGER | INT64
+REAL | DOUBLE
+TEXT | STRING
+BLOB | LARGE_BINARY
+NULL | NA
 
 ## Schema Specification
 
