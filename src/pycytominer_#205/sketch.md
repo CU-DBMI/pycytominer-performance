@@ -10,11 +10,21 @@ __Working Architecture Sketch__
 ```mermaid
 flowchart LR
     sqlite[(*.sqlite file)] --> |extract\ndb schema| tables
-    tables -.->|one-to-many\ntables| read
-    read -.-> data[in-memory\ndata]
+    tables -.-> |one-to-many\ntables| clean
+    clean -.-> |linted\nand prepared| read
+    read --> |collected| data[in-memory\ndata]
+    subgraph SQLAlchemy
+        tables
+    end
+    subgraph sqlite-clean
+        clean
+    end
+    subgraph Connector-X
+        read
+    end
     subgraph Ray Dataset
         direction LR
-        subgraph Arrow RecordBatches
+        subgraph PyArrow Tables
             direction LR
             data
         end
