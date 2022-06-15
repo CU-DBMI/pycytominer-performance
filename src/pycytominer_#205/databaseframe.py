@@ -1,4 +1,9 @@
+"""
+DatabaseFrame class for extracting data as similar
+collection of in-memory data
+"""
 import tempfile
+from typing import Optional
 
 import connectorx as cx
 import pyarrow as pa
@@ -66,25 +71,26 @@ def database_engine_for_testing() -> Engine:
     return engine
 
 
-# as actor?
+@ray.remote
 class DatabaseFrame:
     """
     Create a scalable in-memory dataset from
     all tables within provided database.
     """
 
-    def __init__(self, engine: Union[str, Engine]):
+    def __init__(self, engine: str) -> None:
         self.engine = self.engine_from_str(sql_engine=engine)
+        self.arrow_data = {}
 
-    def engine_from_str(self, sql_engine: Union[str, Engine]) -> Engine:
+    @staticmethod
+    def engine_from_str(sql_engine: str) -> Engine:
         """
-        Helper function to create engine from a string or return the engine
-        if it's already been created.
+        Helper function to create engine from a string.
 
         Parameters
         ----------
-        sql_engine: str | sqlalchemy.engine.base.Engine
-            filename of the SQLite database or existing sqlalchemy engine
+        sql_engine: str
+            filename of the SQLite database
 
         Returns
         -------
@@ -92,14 +98,10 @@ class DatabaseFrame:
             A SQLAlchemy engine
         """
 
-        # check the type of sql_engine passed and create engine if we have a str
-        if isinstance(sql_engine, str):
-            # if we don't already have the sqlite filestring, add it
-            if "sqlite:///" not in sql_engine:
-                sql_engine = f"sqlite:///{sql_engine}"
-            engine = create_engine(sql_engine)
-        else:
-            engine = sql_engine
+        # if we don't already have the sqlite filestring, add it
+        if "sqlite:///" not in sql_engine:
+            sql_engine = f"sqlite:///{sql_engine}"
+        engine = create_engine(sql_engine)
 
         return engine
 
@@ -198,7 +200,7 @@ class DatabaseFrame:
 
         return column_list
 
-    def sql_table_to_arrow(
+    def sql_table_to_arrow_table(
         self,
         table_name: Optional[str] = None,
     ) -> pa.Table:
@@ -239,6 +241,21 @@ class DatabaseFrame:
             PyArrow Table of the SQL table
         """
 
-        tables_list = self.collect_sql_tables(table_name=table_name)
-        for table in tables_list:
-            self.sql_table_to_arrow(table_name=table["table_name"])
+        # for each table in the database gather an arrow table and
+        # organize within dictionary.
+
+        self.arrow_data = {}
+
+        for table in self.collect_sql_tables(table_name=table_name):
+            self.arrow_data[table["table_name"]] = self.sql_table_to_arrow_table(
+                table_name=table["table_name"]
+            )
+
+        return self.arrow_data
+
+
+dbf = DatabaseFrame.remote(engine=str(database_engine_for_testing().url))
+arrow_tables = ray.get(dbf.collect_arrow_tables.remote())
+print(arrow_tables)
+print(arrow_tables["tbl_a"])
+print(arrow_tables["tbl_b"])
