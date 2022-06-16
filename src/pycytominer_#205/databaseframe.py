@@ -2,6 +2,7 @@
 DatabaseFrame class for extracting data as similar
 collection of in-memory data
 """
+import os
 import tempfile
 from typing import Optional
 
@@ -225,7 +226,7 @@ class DatabaseFrame:
     def collect_arrow_tables(
         self,
         table_name: Optional[str] = None,
-    ) -> None:
+    ) -> dict:
         """
         Collect all tables within class's provided engine
         as PyArrow Tables.
@@ -237,8 +238,8 @@ class DatabaseFrame:
 
         Returns
         -------
-        pyarrow.Table
-            PyArrow Table of the SQL table
+        dict
+            dictionary of PyArrow Table(s) from the SQL table(s)
         """
 
         # for each table in the database gather an arrow table and
@@ -253,9 +254,84 @@ class DatabaseFrame:
 
         return self.arrow_data
 
+    def collect_ray_datasets(
+        self,
+        table_name: Optional[str] = None,
+    ) -> dict:
+        """
+        Collect all tables within class's provided engine
+        as Ray Datasets.
+
+        Parameters
+        ----------
+        table_name: str
+            optional specific table name to check within database, by default None
+
+        Returns
+        -------
+        dict
+            dictionary of Ray Dataset(s) from the SQL table(s)
+        """
+
+        self.ray_data = {}
+
+        # collect tables as arrow data if we haven't already
+        if len(self.arrow_data) == 0:
+            self.collect_arrow_tables(table_name=table_name)
+
+        for arr_table_name, arr_table_data in self.arrow_data.items():
+            self.ray_data[arr_table_name] = ray.data.from_arrow(arr_table_data)
+
+        return self.ray_data
+
+    def to_parquet(
+        self,
+        table_name: Optional[str] = None,
+        path: Optional[str] = None,
+    ) -> dict:
+        """
+        Collect all tables within class's provided engine
+        as Ray Datasets.
+
+        Parameters
+        ----------
+        table_name: str
+            optional specific table name to check within database, by default None
+        path: str
+            optional path for directory where parquet output shall be placed
+
+        Returns
+        -------
+        dict
+            dictionary of parquet file locations by table name
+        """
+
+        self.parquet_data = {}
+
+        # if our path is none, create a default path using the basename of the engine url
+        if path is None:
+            path = f"./{os.path.splitext(os.path.basename(str(self.engine.url)))[0]}"
+
+        # collect tables as ray datasets if we haven't already
+        if len(self.arrow_data) == 0:
+            self.collect_ray_datasets(table_name=table_name)
+
+        for ray_dataset_name, ray_dataset_data in self.ray_data.items():
+            self.parquet_data[ray_dataset_name] = ray_dataset_data.write_parquet(
+                path=path
+            )
+
+        return self.parquet_data
+
 
 dbf = DatabaseFrame.remote(engine=str(database_engine_for_testing().url))
 arrow_tables = ray.get(dbf.collect_arrow_tables.remote())
 print(arrow_tables)
 print(arrow_tables["tbl_a"])
 print(arrow_tables["tbl_b"])
+ray_datasets = ray.get(dbf.collect_ray_datasets.remote())
+print(ray_datasets)
+print(ray_datasets["tbl_a"].show())
+print(ray_datasets["tbl_b"].show())
+parquet_datasets = ray.get(dbf.to_parquet.remote())
+print(parquet_datasets)
