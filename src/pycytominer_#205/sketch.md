@@ -13,6 +13,7 @@ flowchart LR
     tables -.-> |one-to-many\ntables| clean
     clean -.-> |linted\nand prepared| read
     read --> |collected| data[in-memory\ndata]
+    data --> conversions[transformations\nor conversions]
     subgraph SQLAlchemy
         tables
     end
@@ -98,7 +99,7 @@ Explicitly map SQLite datatypes to Arrow types. Build from or expand upon actual
 Reference:
 
 - <https://www.sqlite.org/datatype3.html>
-- <https://arrow.apache.org/docs/cpp/api/datatype.html>
+- <https://arrow.apache.org/docs/python/api/datatypes.html>
 
 Data Types Reference Table:
 SQLite Type | Arrow Type
@@ -111,8 +112,44 @@ NULL | NA
 
 ## Schema Specification
 
-Schema may be explicitly specified via Arrow schema.
+Schema may be explicitly specified via [Arrow schema](https://arrow.apache.org/docs/python/generated/pyarrow.schema.html).
 
-Reference:
+### Images, Cells, Nucleus, Cytoplasm
 
-- <https://arrow.apache.org/docs/python/generated/pyarrow.schema.html>
+Indexes:
+
+- TableNumber
+- ImageNumber
+- ObjectNumber (potentially unique per biological compartment)
+
+Linking Objects for Biological Compartments:
+
+```python
+{
+    "cytoplasm": {
+        "cells": "Cytoplasm_Parent_Cells",
+        "nuclei": "Cytoplasm_Parent_Nuclei",
+    },
+    "cells": {"cytoplasm": "ObjectNumber"},
+    "nuclei": {"cytoplasm": "ObjectNumber"},
+}
+```
+
+Working Entity Relationship Diagram:
+
+```mermaid
+erDiagram
+    Image ||--o{ Cytoplasm : contains
+    Image ||--o{ Cells : contains
+    Cells |o--o| Nucleus : possibly-related
+    Cytoplasm |o--o| Nucleus : possibly-related
+    Cytoplasm |o--o| Cells : possibly-related
+    Image ||--o{ Nucleus : contains
+    
+```
+
+Working multidimensional tabular relationship between the compartments:
+
+TableNumber | ImageNumber | Cytoplasm_ObjectNumber | Cells_ObjectNumber | Nucleus_ObjectNumber | Image_Fields...(many) | Cytoplasm_Fields...(many) | Cells_Fields...(many) | Nucleus_Fields...(many)
+--- | --- | --- | --- | --- | --- | --- | --- | ---
+STRING (Not null) | INT64 (Not null) | INT64 (Nullable)| INT64 (Nullable)| INT64 (Nullable) | Various (Populated for ..._ObjectNumber == Null) | Various | Various | Various
