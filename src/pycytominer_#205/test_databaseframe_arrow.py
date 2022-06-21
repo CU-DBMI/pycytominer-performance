@@ -2,118 +2,18 @@
 DatabaseFrame class for extracting data as similar
 collection of in-memory data
 """
-import os
-import tempfile
 from typing import List, Optional
 
 import connectorx as cx
 import pyarrow as pa
 import pyarrow.parquet as pq
-import ray
 from sqlalchemy import create_engine
 from sqlalchemy.engine.base import Engine
 
-ray.init()
+sql_path = "testing_err_fixed_SQ00014613.sqlite"
+sql_url = f"sqlite:///{sql_path}"
 
 
-def database_engine_for_testing() -> Engine:
-    """
-    A database engine for testing as a fixture to be passed
-    to other tests within this file.
-    """
-
-    # get temporary directory
-    tmpdir = tempfile.gettempdir()
-
-    # create a temporary sqlite connection
-    sql_path = f"sqlite:///{tmpdir}/test_sqlite.sqlite"
-    engine = create_engine(sql_path)
-
-    # statements for creating database with simple structure
-    create_stmts = [
-        "drop table if exists Image;",
-        """
-        create table Image (
-        TableNumber INTEGER
-        ,ImageNumber INTEGER
-        ,ImageData INTEGER
-        );
-        """,
-        "drop table if exists Cells;",
-        """
-        create table Cells (
-        TableNumber INTEGER
-        ,ImageNumber INTEGER
-        ,ObjectNumber INTEGER
-        ,CellsData INTEGER
-        );
-        """,
-        "drop table if exists Nucleus;",
-        """
-        create table Nucleus (
-        TableNumber INTEGER
-        ,ImageNumber INTEGER
-        ,ObjectNumber INTEGER
-        ,NucleusData INTEGER
-        );
-        """,
-        "drop table if exists Cytoplasm;",
-        """
-        create table Cytoplasm (
-        TableNumber INTEGER
-        ,ImageNumber INTEGER
-        ,ObjectNumber INTEGER
-        ,Cytoplasm_Parent_Cells INTEGER
-        ,Cytoplasm_Parent_Nuclei INTEGER
-        ,CytoplasmData INTEGER
-        );
-        """,
-    ]
-
-    with engine.begin() as connection:
-        for stmt in create_stmts:
-            connection.execute(stmt)
-
-        # images
-        connection.execute(
-            "INSERT INTO Image VALUES (?, ?, ?);",
-            [1, 1, 1],
-        )
-
-        # cells
-        connection.execute(
-            "INSERT INTO Cells VALUES (?, ?, ?, ?);",
-            [1, 1, 2, 1],
-        )
-        connection.execute(
-            "INSERT INTO Cells VALUES (?, ?, ?, ?);",
-            [1, 1, 3, 1],
-        )
-
-        # nucleus
-        connection.execute(
-            "INSERT INTO Nucleus VALUES (?, ?, ?, ?);",
-            [1, 1, 4, 1],
-        )
-        connection.execute(
-            "INSERT INTO Nucleus VALUES (?, ?, ?, ?);",
-            [1, 1, 5, 1],
-        )
-
-        # cytoplasm
-        connection.execute(
-            "INSERT INTO Cytoplasm VALUES (?, ?, ?, ?, ?, ?);",
-            [1, 1, 6, 2, 4, 1],
-        )
-        connection.execute(
-            "INSERT INTO Cytoplasm VALUES (?, ?, ?, ?, ?, ?);",
-            [1, 1, 7, 3, 5, 1],
-        )
-
-    return engine
-
-
-@ray.remote
 class DatabaseFrame:
     """
     Create a scalable in-memory dataset from
@@ -131,8 +31,6 @@ class DatabaseFrame:
         self.tables_merged = self.to_cytomining_merged(
             compartments=compartments, join_keys=join_keys
         )
-        self.ray_data = {}
-        self.parquet_data = {}
 
     @staticmethod
     def engine_from_str(sql_engine: str) -> Engine:
@@ -466,76 +364,9 @@ class DatabaseFrame:
 
         return filepath
 
-    def collect_ray_datasets(
-        self,
-        table_name: Optional[str] = None,
-    ) -> dict:
-        """
-        Collect all tables within class's provided engine
-        as Ray Datasets.
 
-        Parameters
-        ----------
-        table_name: str
-            optional specific table name to check within database, by default None
-
-        Returns
-        -------
-        dict
-            dictionary of Ray Dataset(s) from the SQL table(s)
-        """
-
-        self.ray_data = {}
-
-        # collect tables as arrow data if we haven't already
-        if len(self.arrow_data) == 0:
-            self.collect_arrow_tables(table_name=table_name)
-
-        for arr_table_name, arr_table_data in self.arrow_data.items():
-            self.ray_data[arr_table_name] = ray.data.from_arrow(arr_table_data)
-
-        return self.ray_data
-
-    def ray_to_parquet(
-        self,
-        table_name: Optional[str] = None,
-        path: Optional[str] = None,
-    ) -> dict:
-        """
-        Collect all tables within class's provided engine
-        as Ray Datasets.
-
-        Parameters
-        ----------
-        table_name: str
-            optional specific table name to check within database, by default None
-        path: str
-            optional path for directory where parquet output shall be placed
-
-        Returns
-        -------
-        dict
-            dictionary of parquet file locations by table name
-        """
-
-        # if our path is none, create a default path using the basename of the engine url
-        if path is None:
-            path = f"./{os.path.splitext(os.path.basename(str(self.engine.url)))[0]}"
-
-        # collect tables as ray datasets if we haven't already
-        if len(self.arrow_data) == 0:
-            self.collect_ray_datasets(table_name=table_name)
-
-        for ray_dataset_name, ray_dataset_data in self.ray_data.items():
-            self.parquet_data[ray_dataset_name] = ray_dataset_data.write_parquet(
-                path=path
-            )
-
-        return self.parquet_data
-
-
-dbf = DatabaseFrame.remote(engine=str(database_engine_for_testing().url))
-print(ray.get((dbf.to_cytomining_merged.remote())))
-print(ray.get(dbf.to_parquet.remote(filepath="example.parquet")))
+dbf = DatabaseFrame(engine=sql_url)
+print("\nFinal result\n")
+print(dbf.tables_merged)
+print(dbf.to_parquet(filepath="example.parquet"))
 print(pq.read_table("example.parquet"))
-print(pq.read_table("example.parquet").to_pandas())
