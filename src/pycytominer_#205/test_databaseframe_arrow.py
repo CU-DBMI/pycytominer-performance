@@ -291,7 +291,7 @@ class DatabaseFrame:
         ----------
         compartments: List[str]
             list of compartments which will be merged.
-            By default Cells, Cytoplasm, Nucleus.
+            By default Cells, Cytoplasm, Nuclei.
         join_keys: List[str]
             list of keys which will be used for join
             By default TableNumber and ImageNumber.
@@ -308,7 +308,7 @@ class DatabaseFrame:
 
         # set default compartments
         if not compartments:
-            compartments = ["Cells", "Cytoplasm", "Nucleus"]
+            compartments = ["Cells", "Cytoplasm", "Nuclei"]
 
         # collect table data if we haven't already
         if len(self.arrow_data) == 0:

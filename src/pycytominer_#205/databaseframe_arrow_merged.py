@@ -50,13 +50,13 @@ def database_engine_for_testing() -> Engine:
         ,CellsData INTEGER
         );
         """,
-        "drop table if exists Nucleus;",
+        "drop table if exists Nuclei;",
         """
-        create table Nucleus (
+        create table Nuclei (
         TableNumber INTEGER
         ,ImageNumber INTEGER
         ,ObjectNumber INTEGER
-        ,NucleusData INTEGER
+        ,NucleiData INTEGER
         );
         """,
         "drop table if exists Cytoplasm;",
@@ -92,13 +92,13 @@ def database_engine_for_testing() -> Engine:
             [1, 1, 3, 1],
         )
 
-        # nucleus
+        # Nuclei
         connection.execute(
-            "INSERT INTO Nucleus VALUES (?, ?, ?, ?);",
+            "INSERT INTO Nuclei VALUES (?, ?, ?, ?);",
             [1, 1, 4, 1],
         )
         connection.execute(
-            "INSERT INTO Nucleus VALUES (?, ?, ?, ?);",
+            "INSERT INTO Nuclei VALUES (?, ?, ?, ?);",
             [1, 1, 5, 1],
         )
 
@@ -392,7 +392,7 @@ class DatabaseFrame:
         ----------
         compartments: List[str]
             list of compartments which will be merged.
-            By default Cells, Cytoplasm, Nucleus.
+            By default Cells, Cytoplasm, Nuclei.
         join_keys: List[str]
             list of keys which will be used for join
             By default TableNumber and ImageNumber.
@@ -409,7 +409,7 @@ class DatabaseFrame:
 
         # set default compartments
         if not compartments:
-            compartments = ["Cells", "Cytoplasm", "Nucleus"]
+            compartments = ["Cells", "Cytoplasm", "Nuclei"]
 
         # collect table data if we haven't already
         if len(self.arrow_data) == 0:
