@@ -4,7 +4,7 @@ collection of in-memory data
 """
 import os
 import tempfile
-from typing import Optional
+from typing import Optional, List
 
 import connectorx as cx
 import pyarrow as pa
@@ -75,31 +75,38 @@ def database_engine_for_testing() -> Engine:
 
         # images
         connection.execute(
-            "INSERT INTO Image VALUES (?, ?, ?);"[1, 1, 1],
+            "INSERT INTO Image VALUES (?, ?, ?);",
+            [1, 1, 1],
         )
 
         # cells
         connection.execute(
-            "INSERT INTO Cells VALUES (?, ?, ?, ?);"[1, 1, 2, 1],
+            "INSERT INTO Cells VALUES (?, ?, ?, ?);",
+            [1, 1, 2, 1],
         )
         connection.execute(
-            "INSERT INTO Cells VALUES (?, ?, ?, ?);"[1, 1, 3, 1],
+            "INSERT INTO Cells VALUES (?, ?, ?, ?);",
+            [1, 1, 3, 1],
         )
 
         # nucleus
         connection.execute(
-            "INSERT INTO Nucleus VALUES (?, ?, ?, ?);"[1, 1, 4, 1],
+            "INSERT INTO Nucleus VALUES (?, ?, ?, ?);",
+            [1, 1, 4, 1],
         )
         connection.execute(
-            "INSERT INTO Nucleus VALUES (?, ?, ?, ?);"[1, 1, 5, 1],
+            "INSERT INTO Nucleus VALUES (?, ?, ?, ?);",
+            [1, 1, 5, 1],
         )
 
         # cytoplasm
         connection.execute(
-            "INSERT INTO Cytoplasm VALUES (?, ?, ?, ?, ?, ?);"[1, 1, 6, 2, 4, 1],
+            "INSERT INTO Cytoplasm VALUES (?, ?, ?, ?, ?, ?);",
+            [1, 1, 6, 2, 4, 1],
         )
         connection.execute(
-            "INSERT INTO Cytoplasm VALUES (?, ?, ?, ?, ?, ?);"[1, 1, 7, 3, 5, 1],
+            "INSERT INTO Cytoplasm VALUES (?, ?, ?, ?, ?, ?);",
+            [1, 1, 7, 3, 5, 1],
         )
 
     return engine
@@ -115,6 +122,9 @@ class DatabaseFrame:
     def __init__(self, engine: str) -> None:
         self.engine = self.engine_from_str(sql_engine=engine)
         self.arrow_data = {}
+        self.ray_data = {}
+        self.parquet_data = {}
+        self.cytomining_merged = pa.Table.from_pydict({})
 
     @staticmethod
     def engine_from_str(sql_engine: str) -> Engine:
@@ -317,30 +327,130 @@ class DatabaseFrame:
 
         return self.ray_data
 
-    def merged(
-        self,
-    ) -> ray.data.Dataset:
+    @staticmethod
+    def table_name_prepend_column_rename(
+        name: str,
+        table: pa.Table,
+        avoid: List[str],
+    ) -> pa.Table:
         """
-        Create merged format
+        Create renamed columns for cytomining efforts
+
+        Parameters
+        ----------
+        name: str
+            name to prepend during rename operation
+        table: pa.Table
+            table which to perform the column renaming operation
+        avoid: List[str]
+            list of keys which will be avoided during rename
 
         Returns
         -------
         ray.data.Dataset
-            Single merged dataset
+            Single joined dataset
         """
 
+        return table.rename_columns(
+            [
+                # prepend table name to the column if the column
+                # name is not in the join keys, otherwise leave it
+                # for joining operations.
+                f"{name}_{x}" if x not in avoid else x
+                for x in table.columns
+            ]
+        )
+
+    @staticmethod
+    def outer_join(
+        left: pa.Table,
+        right: pa.Table,
+        join_keys: List[str],
+    ) -> pa.Table:
+        """
+        Create merged format for cytomining efforts.
+
+        Parameters
+        ----------
+        join_keys: List[str]
+            list of keys which will be used for join
+
+        Returns
+        -------
+        ray.data.Dataset
+            Single joined dataset
+        """
+
+        return left.join(
+            right=right,
+            keys=join_keys,
+            join_type="full outer",
+        )
+
+    def to_cytomining_merged(
+        self,
+        compartments: List[str] = None,
+        join_keys: List[str] = None,
+    ) -> pa.Table:
+        """
+        Create merged dataset for cytomining efforts.
+
+        Note: presumes the presence of an "Image" table within
+        datasets which is used as basis for joining operations.
+
+        Parameters
+        ----------
+        compartments: List[str]
+            list of compartments which will be merged.
+            By default Cells, Cytoplasm, Nucleus.
+        join_keys: List[str]
+            list of keys which will be used for join
+            By default TableNumber and ImageNumber.
+
+        Returns
+        -------
+        pa.Table
+            Single merged dataset from compartments provided.
+        """
+
+        # set default join_key
+        if not join_keys:
+            join_keys = ["TableNumber", "ImageNumber"]
+
+        # set default compartments
+        if not compartments:
+            compartments = ["Cells", "Cytoplasm", "Nucleus"]
+
         # collect tables as ray data if we haven't already
-        if len(self.ray_data) == 0:
-            self.collect_ray_tables(table_name=table_name)
+        if len(self.arrow_data) == 0:
+            self.collect_arrow_tables()
 
-        # presumes available image, cells, nucleus, and cytoplasm tables
+        # prepend table name for each table column to avoid overlaps
+        for table_name, table_data in self.arrow_data.items():
 
-        # rename objectnumber for each biological compartment to avoid overlap
-        # join cytoplasm full outer
-        # join cells full outer
-        # join nucleus full outer
+            # only prepare names for compartments we seek to merge
+            if table_name in compartments:
+                table_data = self.table_name_prepend_column_rename(
+                    name=table_name, table=table_data, avoid=join_keys
+                )
 
-        return self.ray_data
+        # begin with image as basis
+        # create initial merged dataset with image table and first provided compartment
+        self.cytomining_merged = self.outer_join(
+            left=self.arrow_data["Image"],
+            right=self.arrow_data[compartments[0]],
+            join_keys=join_keys,
+        )
+
+        # complete the remaining merges with provided compartments
+        for compartment in compartments[1:]:
+            self.cytomining_merged = self.outer_join(
+                left=self.cytomining_merged,
+                right=self.arrow_data[compartment],
+                join_keys=join_keys,
+            )
+
+        return self.cytomining_merged
 
     def to_parquet(
         self,
@@ -364,8 +474,6 @@ class DatabaseFrame:
             dictionary of parquet file locations by table name
         """
 
-        self.parquet_data = {}
-
         # if our path is none, create a default path using the basename of the engine url
         if path is None:
             path = f"./{os.path.splitext(os.path.basename(str(self.engine.url)))[0]}"
@@ -386,4 +494,5 @@ dbf = DatabaseFrame.remote(engine=str(database_engine_for_testing().url))
 arrow_tables = ray.get(dbf.collect_arrow_tables.remote())
 print(arrow_tables)
 ray_datasets = ray.get(dbf.collect_ray_datasets.remote())
-parquet_datasets = ray.get(dbf.to_parquet.remote())
+merged = ray.get(dbf.to_cytomining_merged.remote())
+print(merged)
