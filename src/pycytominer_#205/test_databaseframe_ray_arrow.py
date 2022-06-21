@@ -177,7 +177,9 @@ class DatabaseFrame:
         """
 
         return cx.read_sql(
-            str(self.engine.url), f"select * from {table_name};", return_type="arrow"
+            str(self.engine.url).replace("///", "//"),
+            f"select * from {table_name};",
+            return_type="arrow",
         )
 
     def collect_arrow_tables(
