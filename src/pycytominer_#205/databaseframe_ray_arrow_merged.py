@@ -4,10 +4,11 @@ collection of in-memory data
 """
 import os
 import tempfile
-from typing import Optional, List
+from typing import List, Optional
 
 import connectorx as cx
 import pyarrow as pa
+import pyarrow.parquet as pq
 import ray
 from sqlalchemy import create_engine
 from sqlalchemy.engine.base import Engine
@@ -119,12 +120,19 @@ class DatabaseFrame:
     all tables within provided database.
     """
 
-    def __init__(self, engine: str) -> None:
+    def __init__(
+        self,
+        engine: str,
+        compartments: List[str] = None,
+        join_keys: List[str] = None,
+    ) -> None:
         self.engine = self.engine_from_str(sql_engine=engine)
-        self.arrow_data = {}
+        self.arrow_data = self.collect_arrow_tables()
+        self.tables_merged = self.to_cytomining_merged(
+            compartments=compartments, join_keys=join_keys
+        )
         self.ray_data = {}
         self.parquet_data = {}
-        self.cytomining_merged = pa.Table.from_pydict({})
 
     @staticmethod
     def engine_from_str(sql_engine: str) -> Engine:
@@ -297,36 +305,6 @@ class DatabaseFrame:
 
         return self.arrow_data
 
-    def collect_ray_datasets(
-        self,
-        table_name: Optional[str] = None,
-    ) -> dict:
-        """
-        Collect all tables within class's provided engine
-        as Ray Datasets.
-
-        Parameters
-        ----------
-        table_name: str
-            optional specific table name to check within database, by default None
-
-        Returns
-        -------
-        dict
-            dictionary of Ray Dataset(s) from the SQL table(s)
-        """
-
-        self.ray_data = {}
-
-        # collect tables as arrow data if we haven't already
-        if len(self.arrow_data) == 0:
-            self.collect_arrow_tables(table_name=table_name)
-
-        for arr_table_name, arr_table_data in self.arrow_data.items():
-            self.ray_data[arr_table_name] = ray.data.from_arrow(arr_table_data)
-
-        return self.ray_data
-
     @staticmethod
     def table_name_prepend_column_rename(
         name: str,
@@ -347,8 +325,8 @@ class DatabaseFrame:
 
         Returns
         -------
-        ray.data.Dataset
-            Single joined dataset
+        pa.Table
+            Single table with renamed columns
         """
 
         return table.rename_columns(
@@ -357,7 +335,7 @@ class DatabaseFrame:
                 # name is not in the join keys, otherwise leave it
                 # for joining operations.
                 f"{name}_{x}" if x not in avoid else x
-                for x in table.columns
+                for x in list(table.schema.names)
             ]
         )
 
@@ -377,14 +355,27 @@ class DatabaseFrame:
 
         Returns
         -------
-        ray.data.Dataset
+        pa.Table
             Single joined dataset
         """
 
+        # prepare for join, adding null columns for any which are not in
+        # right table, and which are also not already in the left table.
+        for column in right.schema.names:
+            if column not in join_keys and column not in left.schema.names:
+                left = left.append_column(
+                    column,
+                    pa.array(
+                        [None] * left.num_rows,
+                        type=right.schema.field(column).type,
+                    ),
+                )
+
         return left.join(
-            right=right,
-            keys=join_keys,
-            join_type="full outer",
+            right,
+            right.schema.names,
+            right.schema.names,
+            "full outer",
         )
 
     def to_cytomining_merged(
@@ -421,7 +412,7 @@ class DatabaseFrame:
         if not compartments:
             compartments = ["Cells", "Cytoplasm", "Nucleus"]
 
-        # collect tables as ray data if we haven't already
+        # collect table data if we haven't already
         if len(self.arrow_data) == 0:
             self.collect_arrow_tables()
 
@@ -430,13 +421,16 @@ class DatabaseFrame:
 
             # only prepare names for compartments we seek to merge
             if table_name in compartments:
-                table_data = self.table_name_prepend_column_rename(
-                    name=table_name, table=table_data, avoid=join_keys
+                # prepend table name for each column name except the join keys
+                self.arrow_data[table_name] = self.table_name_prepend_column_rename(
+                    name=table_name,
+                    table=table_data,
+                    avoid=join_keys,
                 )
 
         # begin with image as basis
         # create initial merged dataset with image table and first provided compartment
-        self.cytomining_merged = self.outer_join(
+        self.table_cytomining_merged = self.outer_join(
             left=self.arrow_data["Image"],
             right=self.arrow_data[compartments[0]],
             join_keys=join_keys,
@@ -444,15 +438,65 @@ class DatabaseFrame:
 
         # complete the remaining merges with provided compartments
         for compartment in compartments[1:]:
-            self.cytomining_merged = self.outer_join(
-                left=self.cytomining_merged,
+            self.table_cytomining_merged = self.outer_join(
+                left=self.table_cytomining_merged,
                 right=self.arrow_data[compartment],
                 join_keys=join_keys,
             )
 
-        return self.cytomining_merged
+        return self.table_cytomining_merged
 
-    def to_parquet(
+    def to_parquet(self, filepath: str) -> str:
+        """
+        Exports merged arrow data content from database
+        into parquet file.
+
+        Parameters
+        ----------
+        filepath: str
+            filepath to export to.
+
+        Returns
+        -------
+        str
+            location of parquet filepath
+        """
+
+        pq.write_table(self.tables_merged, filepath)
+
+        return filepath
+
+    def collect_ray_datasets(
+        self,
+        table_name: Optional[str] = None,
+    ) -> dict:
+        """
+        Collect all tables within class's provided engine
+        as Ray Datasets.
+
+        Parameters
+        ----------
+        table_name: str
+            optional specific table name to check within database, by default None
+
+        Returns
+        -------
+        dict
+            dictionary of Ray Dataset(s) from the SQL table(s)
+        """
+
+        self.ray_data = {}
+
+        # collect tables as arrow data if we haven't already
+        if len(self.arrow_data) == 0:
+            self.collect_arrow_tables(table_name=table_name)
+
+        for arr_table_name, arr_table_data in self.arrow_data.items():
+            self.ray_data[arr_table_name] = ray.data.from_arrow(arr_table_data)
+
+        return self.ray_data
+
+    def ray_to_parquet(
         self,
         table_name: Optional[str] = None,
         path: Optional[str] = None,
@@ -493,6 +537,8 @@ class DatabaseFrame:
 dbf = DatabaseFrame.remote(engine=str(database_engine_for_testing().url))
 arrow_tables = ray.get(dbf.collect_arrow_tables.remote())
 print(arrow_tables)
-ray_datasets = ray.get(dbf.collect_ray_datasets.remote())
 merged = ray.get(dbf.to_cytomining_merged.remote())
 print(merged)
+ray.get(dbf.to_parquet.remote(filepath="example.parquet"))
+print(pq.read_table("example.parquet"))
+print(pq.read_table("example.parquet").to_pandas())

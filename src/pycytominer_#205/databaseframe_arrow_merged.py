@@ -366,7 +366,7 @@ class DatabaseFrame:
                     column,
                     pa.array(
                         [None] * left.num_rows,
-                        type=right.schema.field_by_name(column).type,
+                        type=right.schema.field(column).type,
                     ),
                 )
 
