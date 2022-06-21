@@ -141,6 +141,7 @@ secrets-*.yaml
 dask-worker-space
 *.sqlite
 profile.json
+*.parquet
 
 # dagger ignores, as more than dependencies are included
 cue.mod/pkg
