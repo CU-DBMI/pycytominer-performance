@@ -4,10 +4,11 @@ collection of in-memory data
 """
 import os
 import tempfile
-from typing import Optional
+from typing import List, Optional
 
 import connectorx as cx
 import pyarrow as pa
+import pyarrow.parquet as pq
 import ray
 from sqlalchemy import create_engine
 from sqlalchemy.engine.base import Engine
@@ -47,13 +48,13 @@ def database_engine_for_testing() -> Engine:
         ,CellsData INTEGER
         );
         """,
-        "drop table if exists Nucleus;",
+        "drop table if exists Nuclei;",
         """
-        create table Nucleus (
+        create table Nuclei (
         TableNumber INTEGER
         ,ImageNumber INTEGER
         ,ObjectNumber INTEGER
-        ,NucleusData INTEGER
+        ,NucleiData INTEGER
         );
         """,
         "drop table if exists Cytoplasm;",
@@ -75,31 +76,38 @@ def database_engine_for_testing() -> Engine:
 
         # images
         connection.execute(
-            "INSERT INTO Image VALUES (?, ?, ?);"[1, 1, 1],
+            "INSERT INTO Image VALUES (?, ?, ?);",
+            [1, 1, 1],
         )
 
         # cells
         connection.execute(
-            "INSERT INTO Cells VALUES (?, ?, ?, ?);"[1, 1, 2, 1],
+            "INSERT INTO Cells VALUES (?, ?, ?, ?);",
+            [1, 1, 2, 1],
         )
         connection.execute(
-            "INSERT INTO Cells VALUES (?, ?, ?, ?);"[1, 1, 3, 1],
+            "INSERT INTO Cells VALUES (?, ?, ?, ?);",
+            [1, 1, 3, 1],
         )
 
-        # nucleus
+        # Nuclei
         connection.execute(
-            "INSERT INTO Nucleus VALUES (?, ?, ?, ?);"[1, 1, 4, 1],
+            "INSERT INTO Nuclei VALUES (?, ?, ?, ?);",
+            [1, 1, 4, 1],
         )
         connection.execute(
-            "INSERT INTO Nucleus VALUES (?, ?, ?, ?);"[1, 1, 5, 1],
+            "INSERT INTO Nuclei VALUES (?, ?, ?, ?);",
+            [1, 1, 5, 1],
         )
 
         # cytoplasm
         connection.execute(
-            "INSERT INTO Cytoplasm VALUES (?, ?, ?, ?, ?, ?);"[1, 1, 6, 2, 4, 1],
+            "INSERT INTO Cytoplasm VALUES (?, ?, ?, ?, ?, ?);",
+            [1, 1, 6, 2, 4, 1],
         )
         connection.execute(
-            "INSERT INTO Cytoplasm VALUES (?, ?, ?, ?, ?, ?);"[1, 1, 7, 3, 5, 1],
+            "INSERT INTO Cytoplasm VALUES (?, ?, ?, ?, ?, ?);",
+            [1, 1, 7, 3, 5, 1],
         )
 
     return engine
@@ -112,9 +120,19 @@ class DatabaseFrame:
     all tables within provided database.
     """
 
-    def __init__(self, engine: str) -> None:
+    def __init__(
+        self,
+        engine: str,
+        compartments: List[str] = None,
+        join_keys: List[str] = None,
+    ) -> None:
         self.engine = self.engine_from_str(sql_engine=engine)
-        self.arrow_data = {}
+        self.arrow_data = self.collect_arrow_tables()
+        self.tables_merged = self.to_cytomining_merged(
+            compartments=compartments, join_keys=join_keys
+        )
+        self.ray_data = {}
+        self.parquet_data = {}
 
     @staticmethod
     def engine_from_str(sql_engine: str) -> Engine:
@@ -253,7 +271,9 @@ class DatabaseFrame:
         """
 
         return cx.read_sql(
-            str(self.engine.url), f"select * from {table_name};", return_type="arrow"
+            str(self.engine.url).replace("///", "//"),
+            f"select * from {table_name};",
+            return_type="arrow",
         )
 
     def collect_arrow_tables(
@@ -287,6 +307,167 @@ class DatabaseFrame:
 
         return self.arrow_data
 
+    @staticmethod
+    def table_name_prepend_column_rename(
+        name: str,
+        table: pa.Table,
+        avoid: List[str],
+    ) -> pa.Table:
+        """
+        Create renamed columns for cytomining efforts
+
+        Parameters
+        ----------
+        name: str
+            name to prepend during rename operation
+        table: pa.Table
+            table which to perform the column renaming operation
+        avoid: List[str]
+            list of keys which will be avoided during rename
+
+        Returns
+        -------
+        pa.Table
+            Single table with renamed columns
+        """
+
+        return table.rename_columns(
+            [
+                # prepend table name to the column if the column
+                # name is not in the join keys, otherwise leave it
+                # for joining operations.
+                f"{name}_{x}" if x not in avoid else x
+                for x in list(table.schema.names)
+            ]
+        )
+
+    @staticmethod
+    def outer_join(
+        left: pa.Table,
+        right: pa.Table,
+        join_keys: List[str],
+    ) -> pa.Table:
+        """
+        Create merged format for cytomining efforts.
+
+        Parameters
+        ----------
+        join_keys: List[str]
+            list of keys which will be used for join
+
+        Returns
+        -------
+        pa.Table
+            Single joined dataset
+        """
+
+        # prepare for join, adding null columns for any which are not in
+        # right table, and which are also not already in the left table.
+        for column in right.schema.names:
+            if column not in join_keys and column not in left.schema.names:
+                left = left.append_column(
+                    column,
+                    pa.array(
+                        [None] * left.num_rows,
+                        type=right.schema.field(column).type,
+                    ),
+                )
+
+        return left.join(
+            right,
+            right.schema.names,
+            right.schema.names,
+            "full outer",
+        )
+
+    def to_cytomining_merged(
+        self,
+        compartments: List[str] = None,
+        join_keys: List[str] = None,
+    ) -> pa.Table:
+        """
+        Create merged dataset for cytomining efforts.
+
+        Note: presumes the presence of an "Image" table within
+        datasets which is used as basis for joining operations.
+
+        Parameters
+        ----------
+        compartments: List[str]
+            list of compartments which will be merged.
+            By default Cells, Cytoplasm, Nuclei.
+        join_keys: List[str]
+            list of keys which will be used for join
+            By default TableNumber and ImageNumber.
+
+        Returns
+        -------
+        pa.Table
+            Single merged dataset from compartments provided.
+        """
+
+        # set default join_key
+        if not join_keys:
+            join_keys = ["TableNumber", "ImageNumber"]
+
+        # set default compartments
+        if not compartments:
+            compartments = ["Cells", "Cytoplasm", "Nuclei"]
+
+        # collect table data if we haven't already
+        if len(self.arrow_data) == 0:
+            self.collect_arrow_tables()
+
+        # prepend table name for each table column to avoid overlaps
+        for table_name, table_data in self.arrow_data.items():
+
+            # only prepare names for compartments we seek to merge
+            if table_name in compartments:
+                # prepend table name for each column name except the join keys
+                self.arrow_data[table_name] = self.table_name_prepend_column_rename(
+                    name=table_name,
+                    table=table_data,
+                    avoid=join_keys,
+                )
+
+        # begin with image as basis
+        # create initial merged dataset with image table and first provided compartment
+        self.table_cytomining_merged = self.outer_join(
+            left=self.arrow_data["Image"],
+            right=self.arrow_data[compartments[0]],
+            join_keys=join_keys,
+        )
+
+        # complete the remaining merges with provided compartments
+        for compartment in compartments[1:]:
+            self.table_cytomining_merged = self.outer_join(
+                left=self.table_cytomining_merged,
+                right=self.arrow_data[compartment],
+                join_keys=join_keys,
+            )
+
+        return self.table_cytomining_merged
+
+    def to_parquet(self, filepath: str) -> str:
+        """
+        Exports merged arrow data content from database
+        into parquet file.
+
+        Parameters
+        ----------
+        filepath: str
+            filepath to export to.
+
+        Returns
+        -------
+        str
+            location of parquet filepath
+        """
+
+        pq.write_table(self.tables_merged, filepath)
+
+        return filepath
+
     def collect_ray_datasets(
         self,
         table_name: Optional[str] = None,
@@ -317,32 +498,7 @@ class DatabaseFrame:
 
         return self.ray_data
 
-    def merged(
-        self,
-    ) -> ray.data.Dataset:
-        """
-        Create merged format
-
-        Returns
-        -------
-        ray.data.Dataset
-            Single merged dataset
-        """
-
-        # collect tables as ray data if we haven't already
-        if len(self.ray_data) == 0:
-            self.collect_ray_tables(table_name=table_name)
-
-        # presumes available image, cells, nucleus, and cytoplasm tables
-
-        # rename objectnumber for each biological compartment to avoid overlap
-        # join cytoplasm full outer
-        # join cells full outer
-        # join nucleus full outer
-
-        return self.ray_data
-
-    def to_parquet(
+    def ray_to_parquet(
         self,
         table_name: Optional[str] = None,
         path: Optional[str] = None,
@@ -364,8 +520,6 @@ class DatabaseFrame:
             dictionary of parquet file locations by table name
         """
 
-        self.parquet_data = {}
-
         # if our path is none, create a default path using the basename of the engine url
         if path is None:
             path = f"./{os.path.splitext(os.path.basename(str(self.engine.url)))[0]}"
@@ -383,7 +537,7 @@ class DatabaseFrame:
 
 
 dbf = DatabaseFrame.remote(engine=str(database_engine_for_testing().url))
-arrow_tables = ray.get(dbf.collect_arrow_tables.remote())
-print(arrow_tables)
-ray_datasets = ray.get(dbf.collect_ray_datasets.remote())
-parquet_datasets = ray.get(dbf.to_parquet.remote())
+print(ray.get((dbf.to_cytomining_merged.remote())))
+print(ray.get(dbf.to_parquet.remote(filepath="example.parquet")))
+print(pq.read_table("example.parquet"))
+print(pq.read_table("example.parquet").to_pandas())

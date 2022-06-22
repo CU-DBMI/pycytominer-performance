@@ -148,8 +148,17 @@ erDiagram
     
 ```
 
-Working multidimensional tabular relationship between the compartments:
+Working tabular relationship between the compartments:
 
 TableNumber | ImageNumber | Cytoplasm_ObjectNumber | Cells_ObjectNumber | Nucleus_ObjectNumber | Image_Fields...(many) | Cytoplasm_Fields...(many) | Cells_Fields...(many) | Nucleus_Fields...(many)
 --- | --- | --- | --- | --- | --- | --- | --- | ---
-STRING (Not null) | INT64 (Not null) | INT64 (Nullable)| INT64 (Nullable)| INT64 (Nullable) | Various (Populated for ..._ObjectNumber == Null) | Various | Various | Various
+STRING (Not null) | INT64 (Not null) | INT64 (Nullable)| INT64 (Nullable)| INT64 (Nullable) | Various (Populated for all ..._ObjectNumber == Null) | Various (Cytoplasm_ObjectNumber != Null) | Various (Cells_ObjectNumber != Null) | Various (Nucleus_ObjectNumber != Null)
+
+Example:
+
+TableNumber | ImageNumber | Cytoplasm_ObjectNumber | Cells_ObjectNumber | Nucleus_ObjectNumber | Image_Fields...(many) | Cytoplasm_Fields...(many) | Cells_Fields...(many) | Nucleus_Fields...(many)
+--- | --- | --- | --- | --- | --- | --- | --- | ---
+123abc | 1 | Null | Null| Null | Image Data... | Null | Null | Null
+123abc | 1 | 1 | Null| Null | Null | Cytoplasm Data... | Null | Null
+123abc | 1 | Null | 1| Null | Null | Null | Cells Data... | Null
+123abc | 1 | Null | Null | 1 | Null | Null | Null | Nucleus Data...
