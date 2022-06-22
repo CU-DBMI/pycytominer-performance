@@ -8,8 +8,11 @@ from typing import List, Optional
 
 import pandas as pd
 import numpy as np
+import ray
 from sqlalchemy import create_engine
 from sqlalchemy.engine.base import Engine
+
+ray.init()
 
 
 def database_engine_for_testing() -> Engine:
@@ -38,7 +41,6 @@ def database_engine_for_testing() -> Engine:
         TableNumber INTEGER
         ,ImageNumber INTEGER
         ,ImageData INTEGER
-        ,RandomDate DATETIME
         );
         """,
         "drop table if exists Cells;",
@@ -78,8 +80,8 @@ def database_engine_for_testing() -> Engine:
 
         # images
         connection.execute(
-            "INSERT INTO Image VALUES (?, ?, ?, ?);",
-            [1, 1, 1, "123-123"],
+            "INSERT INTO Image VALUES (?, ?, ?);",
+            [1, 1, 1],
         )
 
         # cells
@@ -115,6 +117,7 @@ def database_engine_for_testing() -> Engine:
     return engine
 
 
+@ray.remote
 class DatabaseFrame:
     """
     Create a scalable in-memory dataset from
@@ -355,6 +358,7 @@ class DatabaseFrame:
 
         # prepare for join, adding null columns for any which are not in
         # right table, and which are also not already in the left table.
+
         left = pd.concat(
             [
                 left,
@@ -470,9 +474,7 @@ class DatabaseFrame:
         return filepath
 
 
-dbf = DatabaseFrame(engine=str(database_engine_for_testing().url))
-print("\nFinal result\n")
-print(dbf)
-print(dbf.dataframes_merged)
-print(dbf.to_parquet(filepath="example.parquet"))
+dbf = DatabaseFrame.remote(engine=str(database_engine_for_testing().url))
+print(ray.get((dbf.to_cytomining_merged.remote())))
+print(ray.get(dbf.to_parquet.remote(filepath="example.parquet")))
 print(pd.read_parquet("example.parquet"))

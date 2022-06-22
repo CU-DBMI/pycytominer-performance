@@ -254,9 +254,24 @@ class DatabaseFrame:
         # prepare for join, adding null columns for any which are not in
         # right table, and which are also not already in the left table.
 
-        for column in right.columns:
-            if column not in join_keys and column not in left.columns:
-                left[column] = np.nan
+        left = pd.concat(
+            [
+                left,
+                pd.DataFrame(
+                    {
+                        colname: pd.Series(
+                            data=np.nan,
+                            index=left.index,
+                            dtype=str(right[colname].dtype).replace("int64", "float64"),
+                        )
+                        for colname in right.columns
+                        if colname not in join_keys and colname not in left.columns
+                    },
+                    index=left.index,
+                ),
+            ],
+            axis=1,
+        )
 
         return pd.merge(
             left=left,
