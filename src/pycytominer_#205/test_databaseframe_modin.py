@@ -157,7 +157,9 @@ class DatabaseFrame:
 
     def sql_table_to_pd_dataframe(
         self,
-        table_name: Optional[str] = None,
+        table_name: str,
+        prepend_tablename_to_cols: bool = True,
+        avoid_prepend_for=List[str],
     ) -> pd.DataFrame:
         """
         Read provided table as pandas dataframe
@@ -165,7 +167,11 @@ class DatabaseFrame:
         Parameters
         ----------
         table_name: str
-            optional specific table name to check within database, by default None
+            specific table name to check within database, by default None
+        prepend_tablename_to_cols: bool
+            Whether prepend table name to column names, by default true
+        avoid_prepend_for: List[str]
+            list of strings of column names to avoid prepending the table name to.
 
         Returns
         -------
@@ -173,7 +179,24 @@ class DatabaseFrame:
             Pandas Dataframe of the SQL table
         """
 
-        return pd.read_sql(f"select * from {table_name}", self.sql_url)
+        if prepend_tablename_to_cols:
+            colnames = [
+                coldata["column_name"]
+                for coldata in self.collect_sql_columns(table_name=table_name)
+            ]
+            colstring = ",".join(
+                [
+                    f"{colname} as '{table_name}_{colname}'"
+                    if colname not in avoid_prepend_for
+                    else colname
+                    for colname in colnames
+                ]
+            )
+            sql_stmt = f"select {colstring} from {table_name}"
+        else:
+            sql_stmt = f"select * from {table_name}"
+
+        return pd.read_sql(sql_stmt, self.sql_url)
 
     def collect_pandas_dataframes(
         self,
@@ -200,7 +223,9 @@ class DatabaseFrame:
         # organize within dictionary.
         for table in self.collect_sql_tables(table_name=table_name):
             self.pandas_data[table["table_name"]] = self.sql_table_to_pd_dataframe(
-                table_name=table["table_name"]
+                table_name=table["table_name"],
+                prepend_tablename_to_cols=True,
+                avoid_prepend_for=["TableNumber", "ImageNumber"],
             )
 
         return self.pandas_data
@@ -241,15 +266,16 @@ class DatabaseFrame:
     def outer_join(
         left: pd.DataFrame,
         right: pd.DataFrame,
-        join_keys: List[str],
     ) -> pd.DataFrame:
         """
         Create merged format for cytomining efforts.
 
         Parameters
         ----------
-        join_keys: List[str]
-            list of keys which will be used for join
+        left: pd.DataFrame
+            left dataframe to join
+        right: pd.DataFrame
+            right dataframe to join
 
         Returns
         -------
@@ -257,33 +283,65 @@ class DatabaseFrame:
             Single joined dataset
         """
 
-        # prepare for join, adding null columns for any which are not in
-        # right table, and which are also not already in the left table.
-        left = pd.concat(
-            [
-                left,
-                pd.DataFrame(
-                    {
-                        colname: pd.Series(
-                            data=np.nan,
-                            index=left.index,
-                            dtype=str(right[colname].dtype).replace("int64", "float64"),
-                        )
-                        for colname in right.columns
-                        if colname not in join_keys and colname not in left.columns
-                    },
-                    index=left.index,
-                ),
-            ],
-            axis=1,
-        )
-
         return pd.merge(
             left=left,
             right=right,
             on=list(right.columns),
             how="outer",
         )
+
+    def nan_data_fill(self, fill_into: str) -> dict:
+        """
+        Fill modin dataset with columns of nan's (and set related coltype for compatibility)
+        from other tables just once to avoid performance woes.
+
+        See this comment for more detail:
+        https://github.com/modin-project/modin/issues/1572#issuecomment-642748842
+
+        Parameters
+        ----------
+        fill_into: str
+            table name to fill na's into
+
+        Returns
+        -------
+        dict
+            dictionary of Pandas Dataframe(s) from the SQL table(s)
+        """
+
+        colnames_and_types = {}
+        for dataframe_name, dataframe_data in self.pandas_data.items():
+            if dataframe_name != fill_into:
+                colnames_and_types.update(
+                    {
+                        colname: str(dataframe_data[colname].dtype).replace(
+                            "int64", "float64"
+                        )
+                        for colname in dataframe_data.columns
+                        if colname not in self.pandas_data[fill_into].columns
+                    }
+                )
+
+        # append all columns not in fill_into table into fill_into
+        self.pandas_data[fill_into] = pd.concat(
+            [
+                self.pandas_data[fill_into],
+                pd.DataFrame(
+                    {
+                        colname: pd.Series(
+                            data=np.nan,
+                            index=self.pandas_data[fill_into].index,
+                            dtype=coltype,
+                        )
+                        for colname, coltype in colnames_and_types.items()
+                    },
+                    index=self.pandas_data[fill_into].index,
+                ),
+            ],
+            axis=1,
+        )
+
+        return self.pandas_data[fill_into]
 
     def to_cytomining_merged(
         self,
@@ -321,34 +379,17 @@ class DatabaseFrame:
 
         # collect table data if we haven't already
         if len(self.pandas_data) == 0:
-            self.collect_pandas_dataframes()
-
-        # prepend table name for each table column to avoid overlaps
-        for table_name, table_data in self.pandas_data.items():
-
-            # only prepare names for compartments we seek to merge
-            if table_name in compartments:
-                # prepend table name for each column name except the join keys
-                self.pandas_data[table_name] = self.df_name_prepend_column_rename(
-                    name=table_name,
-                    dataframe=table_data,
-                    avoid=join_keys,
-                )
+            self.pandas_data = self.collect_pandas_dataframes()
 
         # begin with image as basis
-        # create initial merged dataset with image table and first provided compartment
-        self.df_cytomining_merged = self.outer_join(
-            left=self.pandas_data["Image"],
-            right=self.pandas_data[compartments[0]],
-            join_keys=join_keys,
-        )
+        # prepare image table with columns from other tables for resulting structure needs
+        self.df_cytomining_merged = self.nan_data_fill(fill_into="Image")
 
         # complete the remaining merges with provided compartments
-        for compartment in compartments[1:]:
+        for compartment in compartments:
             self.df_cytomining_merged = self.outer_join(
                 left=self.df_cytomining_merged,
                 right=self.pandas_data[compartment],
-                join_keys=join_keys,
             )
 
         return self.df_cytomining_merged
