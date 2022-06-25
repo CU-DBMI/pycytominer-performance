@@ -131,7 +131,7 @@ class DatabaseFrame:
     ) -> None:
         self.sql_url = engine
         self.engine = self.engine_from_str(sql_engine=engine)
-        self.pandas_data = self.collect_pandas_dataframes()
+        # self.pandas_data = self.collect_pandas_dataframes()
         self.dataframes_merged = self.to_cytomining_merged(
             compartments=compartments, join_keys=join_keys
         )
@@ -389,7 +389,7 @@ class DatabaseFrame:
             how="outer",
         )
 
-    def nan_data_fill(self, fill_into: str) -> dict:
+    def nan_data_fill(self, fill_into: pd.DataFrame, fill_from: pd.DataFrame) -> dict:
         """
         Fill modin dataset with columns of nan's (and set related coltype for compatibility)
         from other tables just once to avoid performance woes.
@@ -399,8 +399,10 @@ class DatabaseFrame:
 
         Parameters
         ----------
-        fill_into: str
-            table name to fill na's into
+        fill_into: pd.DataFrame
+            dataframe to fill na's into
+        fill_into: pd.DataFrame
+            dataframe to fill na's from
 
         Returns
         -------
@@ -408,39 +410,32 @@ class DatabaseFrame:
             dictionary of Pandas Dataframe(s) from the SQL table(s)
         """
 
-        colnames_and_types = {}
-        for dataframe_name, dataframe_data in self.pandas_data.items():
-            if dataframe_name != fill_into:
-                colnames_and_types.update(
-                    {
-                        colname: str(dataframe_data[colname].dtype).replace(
-                            "int64", "float64"
-                        )
-                        for colname in dataframe_data.columns
-                        if colname not in self.pandas_data[fill_into].columns
-                    }
-                )
+        colnames_and_types = {
+            colname: str(fill_from[colname].dtype).replace("int64", "float64")
+            for colname in fill_from.columns
+            if colname not in fill_into.columns
+        }
 
         # append all columns not in fill_into table into fill_into
-        self.pandas_data[fill_into] = pd.concat(
+        fill_into = pd.concat(
             [
-                self.pandas_data[fill_into],
+                fill_into,
                 pd.DataFrame(
                     {
                         colname: pd.Series(
                             data=np.nan,
-                            index=self.pandas_data[fill_into].index,
+                            index=fill_into.index,
                             dtype=coltype,
                         )
                         for colname, coltype in colnames_and_types.items()
                     },
-                    index=self.pandas_data[fill_into].index,
+                    index=fill_into.index,
                 ),
             ],
             axis=1,
         )
 
-        return self.pandas_data[fill_into]
+        return fill_into
 
     def to_cytomining_merged(
         self,
@@ -477,17 +472,23 @@ class DatabaseFrame:
             compartments = ["Cells", "Cytoplasm", "Nuclei"]
 
         # collect table data if we haven't already
-        if len(self.pandas_data) == 0:
-            self.pandas_data = self.collect_pandas_dataframes()
+        # if len(self.pandas_data) == 0:
+        #   self.pandas_data = self.collect_pandas_dataframes()
 
-        # begin with image as basis
-        # prepare image table with columns from other tables for resulting structure needs
-        for dataframe in self.pandas_data:
-            self.nan_data_fill(fill_into=dataframe)
+        concatted = pd.DataFrame()
+        for table in self.collect_sql_tables():
+            to_concat = self.sql_table_to_pd_dataframe(
+                table_name=table["table_name"],
+                prepend_tablename_to_cols=True,
+                avoid_prepend_for=["TableNumber", "ImageNumber"],
+            )
+            if len(concatted) == 0:
+                concatted = to_concat
+            else:
+                concatted = self.nan_data_fill(fill_into=concatted, fill_from=to_concat)
+                concatted = pd.concat([concatted, to_concat])
 
-        self.dataframes_merged = pd.concat(
-            [self.pandas_data[name] for name in self.pandas_data]
-        )
+        self.dataframes_merged = concatted
 
         return self.dataframes_merged
 
