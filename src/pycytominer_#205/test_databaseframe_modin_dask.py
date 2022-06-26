@@ -2,16 +2,15 @@
 DatabaseFrame class for extracting data as similar
 collection of in-memory data
 """
-import os
-import tempfile
 from typing import List, Optional
 
 import modin
 import modin.pandas as pd
-import numpy as np
 from dask.distributed import Client as DaskClient
+import numpy as np
 from sqlalchemy import create_engine
 from sqlalchemy.engine.base import Engine
+
 
 if __name__ == "__main__":
 
@@ -21,107 +20,8 @@ if __name__ == "__main__":
         daskclient = DaskClient()
     print("Dask Scheduler Address: " + str(daskclient.scheduler_info()["address"]))
 
-    def database_engine_for_testing() -> Engine:
-        """
-        A database engine for testing as a fixture to be passed
-        to other tests within this file.
-        """
-
-        # get temporary directory
-        tmpdir = tempfile.gettempdir()
-
-        # remove db if it exists
-        if os.path.exists(f"{tmpdir}/test_sqlite.sqlite"):
-            os.remove(f"{tmpdir}/test_sqlite.sqlite")
-
-        # create a temporary sqlite connection
-        sql_path = f"sqlite:///{tmpdir}/test_sqlite.sqlite"
-
-        engine = create_engine(sql_path)
-
-        # statements for creating database with simple structure
-        create_stmts = [
-            "drop table if exists Image;",
-            """
-            create table Image (
-            TableNumber INTEGER
-            ,ImageNumber INTEGER
-            ,ImageData INTEGER
-            ,RandomDate DATETIME
-            );
-            """,
-            "drop table if exists Cells;",
-            """
-            create table Cells (
-            TableNumber INTEGER
-            ,ImageNumber INTEGER
-            ,ObjectNumber INTEGER
-            ,CellsData INTEGER
-            );
-            """,
-            "drop table if exists Nuclei;",
-            """
-            create table Nuclei (
-            TableNumber INTEGER
-            ,ImageNumber INTEGER
-            ,ObjectNumber INTEGER
-            ,NucleiData INTEGER
-            );
-            """,
-            "drop table if exists Cytoplasm;",
-            """
-            create table Cytoplasm (
-            TableNumber INTEGER
-            ,ImageNumber INTEGER
-            ,ObjectNumber INTEGER
-            ,Cytoplasm_Parent_Cells INTEGER
-            ,Cytoplasm_Parent_Nuclei INTEGER
-            ,CytoplasmData INTEGER
-            );
-            """,
-        ]
-
-        with engine.begin() as connection:
-            for stmt in create_stmts:
-                connection.execute(stmt)
-
-            # images
-            connection.execute(
-                "INSERT INTO Image VALUES (?, ?, ?, ?);",
-                [1, 1, 1, "123-123"],
-            )
-
-            # cells
-            connection.execute(
-                "INSERT INTO Cells VALUES (?, ?, ?, ?);",
-                [1, 1, 2, 1],
-            )
-            connection.execute(
-                "INSERT INTO Cells VALUES (?, ?, ?, ?);",
-                [1, 1, 3, 1],
-            )
-
-            # Nuclei
-            connection.execute(
-                "INSERT INTO Nuclei VALUES (?, ?, ?, ?);",
-                [1, 1, 4, 1],
-            )
-            connection.execute(
-                "INSERT INTO Nuclei VALUES (?, ?, ?, ?);",
-                [1, 1, 5, 1],
-            )
-
-            # cytoplasm
-            connection.execute(
-                "INSERT INTO Cytoplasm VALUES (?, ?, ?, ?, ?, ?);",
-                [1, 1, 6, 2, 4, 1],
-            )
-            connection.execute(
-                "INSERT INTO Cytoplasm VALUES (?, ?, ?, ?, ?, ?);",
-                [1, 1, 7, 3, 5, 1],
-            )
-
-        return engine
+    sql_path = "testing_err_fixed_SQ00014613.sqlite"
+    sql_url = f"sqlite:///{sql_path}"
 
     class DatabaseFrame:
         """
@@ -520,7 +420,7 @@ if __name__ == "__main__":
 
             return filepath
 
-    dbf = DatabaseFrame(engine=str(database_engine_for_testing().url))
+    dbf = DatabaseFrame(engine=sql_url)
     print("\nFinal result\n")
     print(dbf)
     print(dbf.dataframes_merged)

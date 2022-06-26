@@ -2,16 +2,15 @@
 DatabaseFrame class for extracting data as similar
 collection of in-memory data
 """
-import os
-import tempfile
 from typing import List, Optional
 
 import modin
 import modin.pandas as pd
-import numpy as np
 from dask.distributed import Client as DaskClient
+import numpy as np
 from sqlalchemy import create_engine
 from sqlalchemy.engine.base import Engine
+
 
 if __name__ == "__main__":
 
@@ -21,107 +20,8 @@ if __name__ == "__main__":
         daskclient = DaskClient()
     print("Dask Scheduler Address: " + str(daskclient.scheduler_info()["address"]))
 
-    def database_engine_for_testing() -> Engine:
-        """
-        A database engine for testing as a fixture to be passed
-        to other tests within this file.
-        """
-
-        # get temporary directory
-        tmpdir = tempfile.gettempdir()
-
-        # remove db if it exists
-        if os.path.exists(f"{tmpdir}/test_sqlite.sqlite"):
-            os.remove(f"{tmpdir}/test_sqlite.sqlite")
-
-        # create a temporary sqlite connection
-        sql_path = f"sqlite:///{tmpdir}/test_sqlite.sqlite"
-
-        engine = create_engine(sql_path)
-
-        # statements for creating database with simple structure
-        create_stmts = [
-            "drop table if exists Image;",
-            """
-            create table Image (
-            TableNumber INTEGER
-            ,ImageNumber INTEGER
-            ,ImageData INTEGER
-            ,RandomDate DATETIME
-            );
-            """,
-            "drop table if exists Cells;",
-            """
-            create table Cells (
-            TableNumber INTEGER
-            ,ImageNumber INTEGER
-            ,ObjectNumber INTEGER
-            ,CellsData INTEGER
-            );
-            """,
-            "drop table if exists Nuclei;",
-            """
-            create table Nuclei (
-            TableNumber INTEGER
-            ,ImageNumber INTEGER
-            ,ObjectNumber INTEGER
-            ,NucleiData INTEGER
-            );
-            """,
-            "drop table if exists Cytoplasm;",
-            """
-            create table Cytoplasm (
-            TableNumber INTEGER
-            ,ImageNumber INTEGER
-            ,ObjectNumber INTEGER
-            ,Cytoplasm_Parent_Cells INTEGER
-            ,Cytoplasm_Parent_Nuclei INTEGER
-            ,CytoplasmData INTEGER
-            );
-            """,
-        ]
-
-        with engine.begin() as connection:
-            for stmt in create_stmts:
-                connection.execute(stmt)
-
-            # images
-            connection.execute(
-                "INSERT INTO Image VALUES (?, ?, ?, ?);",
-                [1, 1, 1, "123-123"],
-            )
-
-            # cells
-            connection.execute(
-                "INSERT INTO Cells VALUES (?, ?, ?, ?);",
-                [1, 1, 2, 1],
-            )
-            connection.execute(
-                "INSERT INTO Cells VALUES (?, ?, ?, ?);",
-                [1, 1, 3, 1],
-            )
-
-            # Nuclei
-            connection.execute(
-                "INSERT INTO Nuclei VALUES (?, ?, ?, ?);",
-                [1, 1, 4, 1],
-            )
-            connection.execute(
-                "INSERT INTO Nuclei VALUES (?, ?, ?, ?);",
-                [1, 1, 5, 1],
-            )
-
-            # cytoplasm
-            connection.execute(
-                "INSERT INTO Cytoplasm VALUES (?, ?, ?, ?, ?, ?);",
-                [1, 1, 6, 2, 4, 1],
-            )
-            connection.execute(
-                "INSERT INTO Cytoplasm VALUES (?, ?, ?, ?, ?, ?);",
-                [1, 1, 7, 3, 5, 1],
-            )
-
-        return engine
+    sql_path = "testing_err_fixed_SQ00014613.sqlite"
+    sql_url = f"sqlite:///{sql_path}"
 
     class DatabaseFrame:
         """
@@ -137,7 +37,7 @@ if __name__ == "__main__":
         ) -> None:
             self.sql_url = engine
             self.engine = self.engine_from_str(sql_engine=engine)
-            self.pandas_data = self.collect_pandas_dataframes()
+            # self.pandas_data = self.collect_pandas_dataframes()
             self.dataframes_merged = self.to_cytomining_merged(
                 compartments=compartments, join_keys=join_keys
             )
@@ -395,7 +295,9 @@ if __name__ == "__main__":
                 how="outer",
             )
 
-        def nan_data_fill(self, fill_into: str) -> dict:
+        def nan_data_fill(
+            self, fill_into: pd.DataFrame, fill_from: pd.DataFrame
+        ) -> dict:
             """
             Fill modin dataset with columns of nan's (and set related coltype for compatibility)
             from other tables just once to avoid performance woes.
@@ -405,8 +307,10 @@ if __name__ == "__main__":
 
             Parameters
             ----------
-            fill_into: str
-                table name to fill na's into
+            fill_into: pd.DataFrame
+                dataframe to fill na's into
+            fill_into: pd.DataFrame
+                dataframe to fill na's from
 
             Returns
             -------
@@ -414,39 +318,32 @@ if __name__ == "__main__":
                 dictionary of Pandas Dataframe(s) from the SQL table(s)
             """
 
-            colnames_and_types = {}
-            for dataframe_name, dataframe_data in self.pandas_data.items():
-                if dataframe_name != fill_into:
-                    colnames_and_types.update(
-                        {
-                            colname: str(dataframe_data[colname].dtype).replace(
-                                "int64", "float64"
-                            )
-                            for colname in dataframe_data.columns
-                            if colname not in self.pandas_data[fill_into].columns
-                        }
-                    )
+            colnames_and_types = {
+                colname: str(fill_from[colname].dtype).replace("int64", "float64")
+                for colname in fill_from.columns
+                if colname not in fill_into.columns
+            }
 
             # append all columns not in fill_into table into fill_into
-            self.pandas_data[fill_into] = pd.concat(
+            fill_into = pd.concat(
                 [
-                    self.pandas_data[fill_into],
+                    fill_into,
                     pd.DataFrame(
                         {
                             colname: pd.Series(
                                 data=np.nan,
-                                index=self.pandas_data[fill_into].index,
+                                index=fill_into.index,
                                 dtype=coltype,
                             )
                             for colname, coltype in colnames_and_types.items()
                         },
-                        index=self.pandas_data[fill_into].index,
+                        index=fill_into.index,
                     ),
                 ],
                 axis=1,
             )
 
-            return self.pandas_data[fill_into]
+            return fill_into
 
         def to_cytomining_merged(
             self,
@@ -483,21 +380,27 @@ if __name__ == "__main__":
                 compartments = ["Cells", "Cytoplasm", "Nuclei"]
 
             # collect table data if we haven't already
-            if len(self.pandas_data) == 0:
-                self.pandas_data = self.collect_pandas_dataframes()
+            # if len(self.pandas_data) == 0:
+            #   self.pandas_data = self.collect_pandas_dataframes()
 
-            # begin with image as basis
-            # prepare image table with columns from other tables for resulting structure needs
-            self.df_cytomining_merged = self.nan_data_fill(fill_into="Image")
-
-            # complete the remaining merges with provided compartments
-            for compartment in compartments:
-                self.df_cytomining_merged = self.outer_join(
-                    left=self.df_cytomining_merged,
-                    right=self.pandas_data[compartment],
+            concatted = pd.DataFrame()
+            for table in self.collect_sql_tables():
+                to_concat = self.sql_table_to_pd_dataframe(
+                    table_name=table["table_name"],
+                    prepend_tablename_to_cols=True,
+                    avoid_prepend_for=["TableNumber", "ImageNumber"],
                 )
+                if len(concatted) == 0:
+                    concatted = to_concat
+                else:
+                    concatted = self.nan_data_fill(
+                        fill_into=concatted, fill_from=to_concat
+                    )
+                    concatted = pd.concat([concatted, to_concat])
 
-            return self.df_cytomining_merged
+            self.dataframes_merged = concatted
+
+            return self.dataframes_merged
 
         def to_parquet(self, filepath: str) -> str:
             """
@@ -520,7 +423,7 @@ if __name__ == "__main__":
 
             return filepath
 
-    dbf = DatabaseFrame(engine=str(database_engine_for_testing().url))
+    dbf = DatabaseFrame(engine=sql_url)
     print("\nFinal result\n")
     print(dbf)
     print(dbf.dataframes_merged)
