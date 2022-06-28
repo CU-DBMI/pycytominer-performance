@@ -3,7 +3,6 @@ DatabaseFrame class for extracting data as similar
 collection of in-memory data
 """
 import os
-import tempfile
 from typing import List, Optional
 
 import connectorx as cx

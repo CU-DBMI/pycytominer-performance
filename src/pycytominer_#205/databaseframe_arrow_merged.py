@@ -39,6 +39,7 @@ def database_engine_for_testing() -> Engine:
         TableNumber INTEGER
         ,ImageNumber INTEGER
         ,ImageData INTEGER
+        ,DateTime DATETIME
         );
         """,
         "drop table if exists Cells;",
@@ -78,8 +79,8 @@ def database_engine_for_testing() -> Engine:
 
         # images
         connection.execute(
-            "INSERT INTO Image VALUES (?, ?, ?);",
-            [1, 1, 1],
+            "INSERT INTO Image VALUES (?, ?, ?, ?);",
+            [1, 1, 1, "1"],
         )
 
         # cells
@@ -253,7 +254,9 @@ class DatabaseFrame:
 
     def sql_table_to_arrow_table(
         self,
-        table_name: Optional[str] = None,
+        table_name: str,
+        prepend_tablename_to_cols: bool = True,
+        avoid_prepend_for=List[str],
     ) -> pa.Table:
         """
         Read provided table as PyArrow Table
@@ -269,9 +272,28 @@ class DatabaseFrame:
             PyArrow Table of the SQL table
         """
 
+        if prepend_tablename_to_cols:
+            colnames = [
+                coldata["column_name"]
+                if coldata["column_type"] != "DATETIME"
+                else "CAST({} AS TEXT)".format(coldata["column_name"])
+                for coldata in self.collect_sql_columns(table_name=table_name)
+            ]
+            colstring = ",".join(
+                [
+                    f"{colname} as '{table_name}_{colname}'"
+                    if colname not in avoid_prepend_for
+                    else colname
+                    for colname in colnames
+                ]
+            )
+            sql_stmt = f"select {colstring} from {table_name}"
+        else:
+            sql_stmt = f"select * from {table_name}"
+
         return cx.read_sql(
             str(self.engine.url).replace("///", "//"),
-            f"select * from {table_name};",
+            sql_stmt,
             return_type="arrow",
         )
 
@@ -301,7 +323,9 @@ class DatabaseFrame:
 
         for table in self.collect_sql_tables(table_name=table_name):
             self.arrow_data[table["table_name"]] = self.sql_table_to_arrow_table(
-                table_name=table["table_name"]
+                table_name=table["table_name"],
+                prepend_tablename_to_cols=True,
+                avoid_prepend_for=["TableNumber", "ImageNumber"],
             )
 
         return self.arrow_data
@@ -417,28 +441,12 @@ class DatabaseFrame:
         if len(self.arrow_data) == 0:
             self.collect_arrow_tables()
 
-        # prepend table name for each table column to avoid overlaps
-        for table_name, table_data in self.arrow_data.items():
-
-            # only prepare names for compartments we seek to merge
-            if table_name in compartments:
-                # prepend table name for each column name except the join keys
-                self.arrow_data[table_name] = self.table_name_prepend_column_rename(
-                    name=table_name,
-                    table=table_data,
-                    avoid=join_keys,
-                )
-
         # begin with image as basis
         # create initial merged dataset with image table and first provided compartment
-        self.table_cytomining_merged = self.outer_join(
-            left=self.arrow_data["Image"],
-            right=self.arrow_data[compartments[0]],
-            join_keys=join_keys,
-        )
+        self.table_cytomining_merged = self.arrow_data["Image"]
 
         # complete the remaining merges with provided compartments
-        for compartment in compartments[1:]:
+        for compartment in compartments:
             self.table_cytomining_merged = self.outer_join(
                 left=self.table_cytomining_merged,
                 right=self.arrow_data[compartment],

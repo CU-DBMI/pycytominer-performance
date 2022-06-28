@@ -148,6 +148,16 @@ erDiagram
     
 ```
 
+Implementation sketch (possible relationships treated as uniquely different)
+
+```mermaid
+erDiagram
+    Image ||--o{ Cytoplasm : contains
+    Image ||--o{ Cells : contains
+    Image ||--o{ Nucleus : contains
+    
+```
+
 Working tabular relationship between the compartments:
 
 TableNumber | ImageNumber | Cytoplasm_ObjectNumber | Cells_ObjectNumber | Nucleus_ObjectNumber | Image_Fields...(many) | Cytoplasm_Fields...(many) | Cells_Fields...(many) | Nucleus_Fields...(many)
