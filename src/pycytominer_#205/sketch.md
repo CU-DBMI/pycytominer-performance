@@ -5,7 +5,42 @@ convert SQLite database files to another format for use within `pycytominer` to 
 
 ## Diagrams
 
-__Working Architecture Sketch__
+__Map-Chunks Architecture Sketch__
+
+Smaller chunks mapped to aggregate result.
+
+```mermaid
+flowchart LR
+    sqlite[(*.sqlite file)] --> |extract\ndb schema| tables
+    tables -.-> |one-to-many\ntables| clean
+    clean -.-> |linted\nand prepared| read
+    read -.-> |first\nchunks| data
+    read -.-> |merge\nchunks| data2
+    data[basis table\nframes] -.-> |chunks| merge[merged\nbasis frames]
+    data2[component X... table\nframes] -.-> |chunks| merge
+    merge -.-> |chunks| conversions[to_parquet]
+    subgraph SQLAlchemy
+        tables
+    end
+    subgraph sqlite-clean
+        clean
+    end
+    subgraph Connector-X
+        read
+    end
+    subgraph Frame-Ops
+        direction LR
+        data
+        data2
+        merge
+    end
+    style data2 stroke:#444,stroke-width:2px,stroke-dasharray: 5 5
+
+```
+
+__Brute-Expand Architecture Sketch__
+
+Large aggregate result.
 
 ```mermaid
 flowchart LR
