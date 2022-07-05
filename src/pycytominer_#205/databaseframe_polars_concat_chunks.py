@@ -275,7 +275,7 @@ class DatabaseFrame:
         table_name: str,
         prepend_tablename_to_cols: bool = True,
         avoid_prepend_for=List[str],
-        basis_dict: dict = None,
+        basis_list_dicts: list = None,
     ) -> pl.DataFrame:
         """
         Read provided table as pandas dataframe
@@ -316,9 +316,17 @@ class DatabaseFrame:
 
         sql_stmt += f" from {table_name}"
 
-        if basis_dict:
-            basis_dict_str = " AND ".join(
-                [f"{key} = '{val}'" for key, val in basis_dict.items()]
+        if basis_list_dicts:
+            basis_dict_str = " OR ".join(
+                [
+                    f"({where_group})"
+                    for where_group in [
+                        " AND ".join(
+                            [f"{key} = '{val}'" for key, val in list_dict.items()]
+                        )
+                        for list_dict in basis_list_dicts
+                    ]
+                ]
             )
             sql_stmt += f" where {basis_dict_str}"
 
@@ -396,6 +404,7 @@ class DatabaseFrame:
         basis: str = None,
         compartments: List[str] = None,
         join_keys: List[str] = None,
+        chunk_size: int = 50,
         filename: str = None,
     ) -> pl.DataFrame:
         """
@@ -440,15 +449,21 @@ class DatabaseFrame:
             table_name=basis, join_keys=join_keys
         )
 
+        # chunk the dicts so as to create batches
+        basis_list_dicts_chunks = [
+            basis_dicts[i : i + chunk_size]
+            for i in range(0, len(basis_dicts), chunk_size)
+        ]
+
         count = 0
-        for basis_dict in basis_dicts:
+        for basis_list_dicts in basis_list_dicts_chunks:
             concatted = pl.DataFrame()
             for table in self.collect_sql_tables():
                 to_concat = self.sql_table_to_pl_dataframe(
                     table_name=table["table_name"],
                     prepend_tablename_to_cols=True,
                     avoid_prepend_for=["TableNumber", "ImageNumber"],
-                    basis_dict=basis_dict,
+                    basis_list_dicts=basis_list_dicts,
                 )
                 if len(concatted) == 0:
                     concatted = to_concat
