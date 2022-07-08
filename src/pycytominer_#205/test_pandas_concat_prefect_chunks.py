@@ -445,7 +445,6 @@ if __name__ == "__main__":
                 tbl_list=df_to_ar_tbl, filename=unmapped(param_filename)
             )
 
-        flow.visualize(filename="example")
         flow.run(
             executor=executor,
             parameters=dict(
@@ -462,13 +461,15 @@ if __name__ == "__main__":
     print("\nFinal result\n")
     for filename in glob.glob("./data/example*"):
         os.remove(filename)
-    executor = DaskExecutor()
+    executor = DaskExecutor(
+        cluster_kwargs={"n_workers": 6, "threads_per_worker": 1, "memory_limit": "10GB"}
+    )
     print(
         run_workflow(
             engine=sql_url,
             executor=executor,
             filename="./data/example",
-            chunk_size=1,
+            chunk_size=5,
         )
     )
     print(pl.read_parquet("./data/example.parquet"))

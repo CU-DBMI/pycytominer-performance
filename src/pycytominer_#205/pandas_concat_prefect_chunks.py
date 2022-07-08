@@ -5,8 +5,6 @@ collection of in-memory data
 import glob
 import os
 import tempfile
-import uuid
-from ntpath import join
 from typing import List, Optional
 
 import numpy as np
@@ -549,7 +547,6 @@ if __name__ == "__main__":
                 tbl_list=df_to_ar_tbl, filename=unmapped(param_filename)
             )
 
-        flow.visualize(filename="example")
         flow.run(
             executor=executor,
             parameters=dict(
@@ -566,7 +563,9 @@ if __name__ == "__main__":
     print("\nFinal result\n")
     for filename in glob.glob("./data/example*"):
         os.remove(filename)
-    executor = DaskExecutor()
+    executor = DaskExecutor(
+        cluster_kwargs={"n_workers": 6, "threads_per_worker": 1, "memory_limit": "10GB"}
+    )
     print(
         run_workflow(
             engine=str(database_engine_for_testing().url),
