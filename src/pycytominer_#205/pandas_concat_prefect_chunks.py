@@ -6,7 +6,7 @@ import glob
 import os
 import tempfile
 from typing import List, Optional
-
+import uuid
 import numpy as np
 import pandas as pd
 import pyarrow as pa
@@ -296,8 +296,6 @@ if __name__ == "__main__":
         if prepend_tablename_to_cols:
             colnames = [
                 coldata["column_name"]
-                if coldata["column_type"] != "DATETIME"
-                else "CAST({} AS TEXT)".format(coldata["column_name"])
                 for coldata in collect_sql_columns.run(
                     engine=engine_from_str.run(engine), table_name=table_name
                 )
@@ -440,21 +438,26 @@ if __name__ == "__main__":
         return concatted
 
     @task
-    def pandas_df_to_arrow_table(df: pd.DataFrame) -> pa.Table:
-        """
-        return a pyarrow table based on pandas dataframe
-        """
-        return pa.Table.from_pandas(df)
+    def _to_parquet(df: pd.DataFrame, filename: str) -> str:
+        file_uuid = str(uuid.uuid4().hex)
+        filename_uuid = f"{filename}-{file_uuid}.parquet"
+        df.to_parquet(filename_uuid)
+        return filename_uuid
 
     @task
-    def _to_parquet(
-        tbl_list: pd.DataFrame,
+    def multi_to_single_parquet(
+        pq_files: str,
         filename: str,
     ):
         full_filename = f"{filename}.parquet"
-        writer = pq.ParquetWriter(full_filename, tbl_list[0].schema)
-        for tbl in tbl_list:
-            writer.write_table(tbl)
+
+        if os.path.isfile(full_filename):
+            os.remove(full_filename)
+
+        writer = pq.ParquetWriter(full_filename, pq.read_table(pq_files[0]).schema)
+        for tbl in pq_files:
+            writer.write_table(pq.read_table(tbl))
+            os.remove(tbl)
 
         writer.close()
 
@@ -540,11 +543,11 @@ if __name__ == "__main__":
             )
 
             # map to convert from pd dataframes to arrow tables for pq writing
-            df_to_ar_tbl = pandas_df_to_arrow_table.map(df=df_concat)
+            pq_files = _to_parquet.map(df=df_concat, filename=unmapped(param_filename))
 
             # reduce to single pq file
-            pq_result = _to_parquet(
-                tbl_list=df_to_ar_tbl, filename=unmapped(param_filename)
+            reduced_pq_result = multi_to_single_parquet(
+                pq_files=pq_files, filename=param_filename
             )
 
         flow.run(
@@ -563,9 +566,7 @@ if __name__ == "__main__":
     print("\nFinal result\n")
     for filename in glob.glob("./data/example*"):
         os.remove(filename)
-    executor = DaskExecutor(
-        cluster_kwargs={"n_workers": 6, "threads_per_worker": 1, "memory_limit": "10GB"}
-    )
+    executor = DaskExecutor()
     print(
         run_workflow(
             engine=str(database_engine_for_testing().url),

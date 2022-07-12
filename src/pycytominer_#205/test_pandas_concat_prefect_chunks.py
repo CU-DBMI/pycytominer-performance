@@ -4,7 +4,7 @@ collection of in-memory data
 """
 import glob
 import os
-
+import uuid
 from typing import List, Optional
 
 import numpy as np
@@ -14,12 +14,13 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from prefect import Flow, Parameter, task, unmapped
 from prefect.executors import DaskExecutor, Executor, LocalExecutor
+from prefect.storage import Local
 from sqlalchemy import create_engine
 from sqlalchemy.engine.base import Engine
 
 if __name__ == "__main__":
 
-    sql_path = "testing_err_fixed_SQ00014613.sqlite"
+    sql_path = "SQ00014613_mod.sqlite"
     sql_url = f"sqlite:///{sql_path}"
 
     @task
@@ -194,8 +195,6 @@ if __name__ == "__main__":
         if prepend_tablename_to_cols:
             colnames = [
                 coldata["column_name"]
-                if coldata["column_type"] != "DATETIME"
-                else "CAST({} AS TEXT)".format(coldata["column_name"])
                 for coldata in collect_sql_columns.run(
                     engine=engine_from_str.run(engine), table_name=table_name
                 )
@@ -312,12 +311,13 @@ if __name__ == "__main__":
         return fill_into
 
     @task
-    def table_concatenator(
+    def table_concat_to_parquet(
         engine,
         table_list,
         prepend_tablename_to_cols: bool,
         avoid_prepend_for: list,
         basis_list_dicts: list,
+        filename: str,
     ):
         concatted = pd.DataFrame()
         for table in table_list:
@@ -335,24 +335,31 @@ if __name__ == "__main__":
                 to_concat = nan_data_fill.run(fill_into=to_concat, fill_from=concatted)
                 concatted = pd.concat([concatted, to_concat])
 
-        return concatted
+        filename_uuid = to_unique_parquet.run(df=concatted, filename=filename)
+
+        return filename_uuid
 
     @task
-    def pandas_df_to_arrow_table(df: pd.DataFrame) -> pa.Table:
-        """
-        return a pyarrow table based on pandas dataframe
-        """
-        return pa.Table.from_pandas(df)
+    def to_unique_parquet(df: pd.DataFrame, filename: str) -> str:
+        file_uuid = str(uuid.uuid4().hex)
+        filename_uuid = f"{filename}-{file_uuid}.parquet"
+        df.to_parquet(filename_uuid, compression=None)
+        return filename_uuid
 
     @task
-    def _to_parquet(
-        tbl_list: pd.DataFrame,
+    def multi_to_single_parquet(
+        pq_files: str,
         filename: str,
     ):
         full_filename = f"{filename}.parquet"
-        writer = pq.ParquetWriter(full_filename, tbl_list[0].schema)
-        for tbl in tbl_list:
-            writer.write_table(tbl)
+
+        if os.path.isfile(full_filename):
+            os.remove(full_filename)
+
+        writer = pq.ParquetWriter(full_filename, pq.read_table(pq_files[0]).schema)
+        for tbl in pq_files:
+            writer.write_table(pq.read_table(tbl))
+            os.remove(tbl)
 
         writer.close()
 
@@ -407,7 +414,7 @@ if __name__ == "__main__":
         # if len(pandas_data) == 0:
         #   pandas_data = collect_pandas_dataframes()
 
-        with Flow("to parquet") as flow:
+        with Flow("to parquet", storage=Local()) as flow:
 
             param_engine = Parameter("engine", default="")
             param_basis = Parameter("basis", default="image")
@@ -429,20 +436,18 @@ if __name__ == "__main__":
             table_list = collect_sql_tables(engine=param_engine)
 
             # map to gather our concatted/merged pd dataframes
-            df_concat = table_concatenator.map(
+            pq_files = table_concat_to_parquet.map(
                 engine=unmapped(param_engine),
                 table_list=unmapped(table_list),
                 prepend_tablename_to_cols=unmapped(True),
                 avoid_prepend_for=unmapped(param_join_keys),
                 basis_list_dicts=basis_dicts,
+                filename=unmapped(param_filename),
             )
 
-            # map to convert from pd dataframes to arrow tables for pq writing
-            df_to_ar_tbl = pandas_df_to_arrow_table.map(df=df_concat)
-
             # reduce to single pq file
-            pq_result = _to_parquet(
-                tbl_list=df_to_ar_tbl, filename=unmapped(param_filename)
+            reduced_pq_result = multi_to_single_parquet(
+                pq_files=pq_files, filename=param_filename, upstream_tasks=[pq_files]
             )
 
         flow.run(
@@ -459,17 +464,15 @@ if __name__ == "__main__":
         return
 
     print("\nFinal result\n")
-    for filename in glob.glob("./data/example*"):
+    for filename in glob.glob("./data/SQ00014613_mod*"):
         os.remove(filename)
-    executor = DaskExecutor(
-        cluster_kwargs={"n_workers": 6, "threads_per_worker": 1, "memory_limit": "10GB"}
-    )
+    executor = DaskExecutor()
     print(
         run_workflow(
             engine=sql_url,
             executor=executor,
-            filename="./data/example",
-            chunk_size=5,
+            filename="./data/SQ00014613_mod",
+            chunk_size=15,
         )
     )
-    print(pl.read_parquet("./data/example.parquet"))
+    print(pl.read_parquet("./data/SQ00014613_mod.parquet"))

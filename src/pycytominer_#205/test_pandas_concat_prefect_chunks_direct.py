@@ -4,9 +4,11 @@ collection of in-memory data
 """
 import glob
 import os
+import uuid
 from typing import List, Optional
 
-import connectorx as cx
+import numpy as np
+import pandas as pd
 import polars as pl
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -15,10 +17,9 @@ from prefect.executors import DaskExecutor, Executor, LocalExecutor
 from sqlalchemy import create_engine
 from sqlalchemy.engine.base import Engine
 
-
 if __name__ == "__main__":
 
-    sql_path = "testing_err_fixed_SQ00014613.sqlite"
+    sql_path = "SQ00014613_mod.sqlite"
     sql_url = f"sqlite:///{sql_path}"
 
     @task
@@ -154,11 +155,10 @@ if __name__ == "__main__":
         sql_stmt = f"""
         select distinct {join_keys_str} from {table_name}
         """
-        basis_dicts = cx.read_sql(
-            engine.replace("///", "//"),
+        basis_dicts = pd.read_sql(
             sql_stmt,
-            return_type="polars",
-        ).to_dicts()
+            engine_from_str.run(engine),
+        ).to_dict(orient="records")
         chunked_basis_dicts = [
             basis_dicts[i : i + chunk_size]
             for i in range(0, len(basis_dicts), chunk_size)
@@ -172,7 +172,7 @@ if __name__ == "__main__":
         prepend_tablename_to_cols: bool = True,
         avoid_prepend_for=List[str],
         basis_list_dicts: list = None,
-    ) -> pl.DataFrame:
+    ) -> pd.DataFrame:
         """
         Read provided table as pandas dataframe
 
@@ -187,17 +187,15 @@ if __name__ == "__main__":
 
         Returns
         -------
-        pl.DataFrame
+        pd.DataFrame
             Pandas Dataframe of the SQL table
         """
 
         if prepend_tablename_to_cols:
             colnames = [
                 coldata["column_name"]
-                if coldata["column_type"] != "DATETIME"
-                else "CAST({} AS TEXT)".format(coldata["column_name"])
                 for coldata in collect_sql_columns.run(
-                    engine=engine, table_name=table_name
+                    engine=engine_from_str.run(engine), table_name=table_name
                 )
             ]
             colstring = ",".join(
@@ -228,18 +226,14 @@ if __name__ == "__main__":
             )
             sql_stmt += f" where {basis_dict_str}"
 
-        return cx.read_sql(
-            engine.replace("///", "//"),
-            sql_stmt,
-            return_type="polars",
-        )
+        return pd.read_sql(sql_stmt, engine_from_str.run(engine))
 
     @task
     def df_name_prepend_column_rename(
         name: str,
-        dataframe: pl.DataFrame,
+        dataframe: pd.DataFrame,
         avoid: List[str],
-    ) -> pl.DataFrame:
+    ) -> pd.DataFrame:
         """
         Create renamed columns for cytomining efforts
 
@@ -247,14 +241,14 @@ if __name__ == "__main__":
         ----------
         name: str
             name to prepend during rename operation
-        dataframe: pl.DataFrame
+        dataframe: pd.DataFrame
             table which to perform the column renaming operation
         avoid: List[str]
             list of keys which will be avoided during rename
 
         Returns
         -------
-        pl.DataFrame
+        pd.DataFrame
             Single dataframe with renamed columns
         """
         dataframe.columns = [
@@ -267,7 +261,7 @@ if __name__ == "__main__":
         return dataframe
 
     @task
-    def nan_data_fill(fill_into: pl.DataFrame, fill_from: pl.DataFrame) -> dict:
+    def nan_data_fill(fill_into: pd.DataFrame, fill_from: pd.DataFrame) -> dict:
         """
         Fill modin dataset with columns of nan's (and set related coltype for compatibility)
         from other tables just once to avoid performance woes.
@@ -277,9 +271,9 @@ if __name__ == "__main__":
 
         Parameters
         ----------
-        fill_into: pl.DataFrame
+        fill_into: pd.DataFrame
             dataframe to fill na's into
-        fill_into: pl.DataFrame
+        fill_into: pd.DataFrame
             dataframe to fill na's from
 
         Returns
@@ -288,28 +282,46 @@ if __name__ == "__main__":
             dictionary of Pandas Dataframe(s) from the SQL table(s)
         """
 
-        # append all columns not in fill_into table into fill_into
-        for column, dtype in fill_from.schema.items():
-            if column not in fill_into.schema.keys():
-                fill_into = fill_into.with_column(
-                    pl.lit(None, dtype=dtype).alias(column)
-                )
+        colnames_and_types = {
+            colname: str(fill_from[colname].dtype).replace("int64", "float64")
+            for colname in fill_from.columns
+            if colname not in fill_into.columns
+        }
 
-        # return a sorted column projection
-        return fill_into.select(sorted(fill_into.columns))
+        # append all columns not in fill_into table into fill_into
+        fill_into = pd.concat(
+            [
+                fill_into,
+                pd.DataFrame(
+                    {
+                        colname: pd.Series(
+                            data=np.nan,
+                            index=fill_into.index,
+                            dtype=coltype,
+                        )
+                        for colname, coltype in colnames_and_types.items()
+                    },
+                    index=fill_into.index,
+                ),
+            ],
+            axis=1,
+        )
+
+        return fill_into
 
     @task
-    def table_concatenator(
+    def table_concat_to_arrow(
         engine,
         table_list,
         prepend_tablename_to_cols: bool,
         avoid_prepend_for: list,
         basis_list_dicts: list,
+        filename: str,
     ):
-        concatted = pl.DataFrame()
+        concatted = pd.DataFrame()
         for table in table_list:
             to_concat = sql_table_to_pl_dataframe.run(
-                engine=engine,
+                engine=engine_from_str.run(engine),
                 table_name=table["table_name"],
                 prepend_tablename_to_cols=prepend_tablename_to_cols,
                 avoid_prepend_for=avoid_prepend_for,
@@ -320,25 +332,29 @@ if __name__ == "__main__":
             else:
                 concatted = nan_data_fill.run(fill_into=concatted, fill_from=to_concat)
                 to_concat = nan_data_fill.run(fill_into=to_concat, fill_from=concatted)
-                concatted = pl.concat([concatted, to_concat])
+                concatted = pd.concat([concatted, to_concat])
 
-        return concatted
-
-    @task
-    def polars_df_to_arrow_table(df: pl.DataFrame) -> pa.Table:
-        """
-        return a pyarrow table based on dataframe
-        """
-        return df.to_arrow()
+        return pa.Table.from_pandas(concatted)
 
     @task
-    def _to_parquet(
-        tbl_list: pl.DataFrame,
+    def to_unique_parquet(df: pd.DataFrame, filename: str) -> str:
+        file_uuid = str(uuid.uuid4().hex)
+        filename_uuid = f"{filename}-{file_uuid}.parquet"
+        df.to_parquet(filename_uuid)
+        return filename_uuid
+
+    @task
+    def multi_to_single_parquet(
+        pq_files: str,
         filename: str,
     ):
         full_filename = f"{filename}.parquet"
-        writer = pq.ParquetWriter(full_filename, tbl_list[0].schema)
-        for tbl in tbl_list:
+
+        if os.path.isfile(full_filename):
+            os.remove(full_filename)
+
+        writer = pq.ParquetWriter(full_filename, pq_files[0].schema)
+        for tbl in pq_files:
             writer.write_table(tbl)
 
         writer.close()
@@ -346,14 +362,14 @@ if __name__ == "__main__":
         return full_filename
 
     def run_workflow(
-        engine: str,
+        engine: Engine,
         executor: Executor = None,
         basis: str = None,
         compartments: List[str] = None,
         join_keys: List[str] = None,
         chunk_size: int = 50,
         filename: str = None,
-    ) -> pl.DataFrame:
+    ) -> pd.DataFrame:
         """
         Create merged dataset for cytomining efforts.
 
@@ -373,7 +389,7 @@ if __name__ == "__main__":
 
         Returns
         -------
-        pl.DataFrame
+        pd.DataFrame
             Single merged dataset from compartments provided.
         """
         if not executor:
@@ -389,6 +405,10 @@ if __name__ == "__main__":
         # set default compartments
         if not compartments:
             compartments = ["Cells", "Cytoplasm", "Nuclei"]
+
+        # collect table data if we haven't already
+        # if len(pandas_data) == 0:
+        #   pandas_data = collect_pandas_dataframes()
 
         with Flow("to parquet") as flow:
 
@@ -412,20 +432,18 @@ if __name__ == "__main__":
             table_list = collect_sql_tables(engine=param_engine)
 
             # map to gather our concatted/merged pd dataframes
-            df_concat = table_concatenator.map(
+            pq_files = table_concat_to_arrow.map(
                 engine=unmapped(param_engine),
                 table_list=unmapped(table_list),
                 prepend_tablename_to_cols=unmapped(True),
                 avoid_prepend_for=unmapped(param_join_keys),
                 basis_list_dicts=basis_dicts,
+                filename=unmapped(param_filename),
             )
 
-            # map to convert from pd dataframes to arrow tables for pq writing
-            df_to_ar_tbl = polars_df_to_arrow_table.map(df=df_concat)
-
             # reduce to single pq file
-            pq_result = _to_parquet(
-                tbl_list=df_to_ar_tbl, filename=unmapped(param_filename)
+            reduced_pq_result = multi_to_single_parquet(
+                pq_files=pq_files, filename=param_filename
             )
 
         flow.run(
@@ -438,20 +456,19 @@ if __name__ == "__main__":
                 filename=filename,
             ),
         )
+
         return
 
     print("\nFinal result\n")
-    for filename in glob.glob("./data/example*"):
+    for filename in glob.glob("./data/*"):
         os.remove(filename)
-    executor = DaskExecutor(
-        cluster_kwargs={"n_workers": 6, "threads_per_worker": 1, "memory_limit": "10GB"}
-    )
+    executor = DaskExecutor()
     print(
         run_workflow(
             engine=sql_url,
             executor=executor,
-            filename="./data/example",
-            chunk_size=5,
+            filename="./data/SQ00014613_mod",
+            chunk_size=2,
         )
     )
-    print(pl.read_parquet("./data/example.parquet"))
+    print(pl.read_parquet("./data/SQ00014613_mod.parquet"))
