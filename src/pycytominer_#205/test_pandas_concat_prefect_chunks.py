@@ -20,7 +20,7 @@ from sqlalchemy.engine.base import Engine
 
 if __name__ == "__main__":
 
-    sql_path = "SQ00014613_mod.sqlite"
+    sql_path = "testing_err_fixed_SQ00014613.sqlite"
     sql_url = f"sqlite:///{sql_path}"
 
     @task
@@ -450,7 +450,7 @@ if __name__ == "__main__":
                 pq_files=pq_files, filename=param_filename, upstream_tasks=[pq_files]
             )
 
-        flow.run(
+        state = flow.run(
             executor=executor,
             parameters=dict(
                 engine=engine,
@@ -461,18 +461,20 @@ if __name__ == "__main__":
             ),
         )
 
-        return
+        print(state.result[reduced_pq_result]._result.value)
+
+        return state.result[reduced_pq_result]._result.value
 
     print("\nFinal result\n")
-    for filename in glob.glob("./data/SQ00014613_mod*"):
+    for filename in glob.glob("./data/testing_err_fixed_SQ00014613*"):
         os.remove(filename)
     executor = DaskExecutor()
     print(
         run_workflow(
             engine=sql_url,
             executor=executor,
-            filename="./data/SQ00014613_mod",
+            filename="./data/testing_err_fixed_SQ00014613",
             chunk_size=15,
         )
     )
-    print(pl.read_parquet("./data/SQ00014613_mod.parquet"))
+    print(pl.read_parquet("./data/testing_err_fixed_SQ00014613.parquet"))

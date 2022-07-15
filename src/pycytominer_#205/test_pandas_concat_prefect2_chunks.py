@@ -4,128 +4,23 @@ collection of in-memory data
 """
 import glob
 import os
-import tempfile
 import uuid
 from typing import List, Optional
 
 import numpy as np
 import pandas as pd
+import polars as pl
 import pyarrow as pa
 import pyarrow.parquet as pq
-from prefect import Flow, Parameter, task, unmapped
-from prefect.engine.results import LocalResult
-from prefect.executors import DaskExecutor, Executor, LocalExecutor
-from prefect.storage import Local
+from prefect import flow, task
+from prefect.task_runners import ConcurrentTaskRunner
 from sqlalchemy import create_engine
 from sqlalchemy.engine.base import Engine
 
 if __name__ == "__main__":
 
-    def database_engine_for_testing() -> Engine:
-        """
-        A database engine for testing as a fixture to be passed
-        to other tests within this file.
-        """
-
-        # get temporary directory
-        tmpdir = tempfile.gettempdir()
-
-        # remove db if it exists
-        if os.path.exists(f"{tmpdir}/test_sqlite.sqlite"):
-            os.remove(f"{tmpdir}/test_sqlite.sqlite")
-
-        # create a temporary sqlite connection
-        sql_path = f"sqlite:///{tmpdir}/test_sqlite.sqlite"
-
-        engine = create_engine(sql_path)
-
-        # statements for creating database with simple structure
-        create_stmts = [
-            "drop table if exists Image;",
-            """
-            create table Image (
-            TableNumber INTEGER
-            ,ImageNumber INTEGER
-            ,ImageData INTEGER
-            ,RandomDate DATETIME
-            );
-            """,
-            "drop table if exists Cells;",
-            """
-            create table Cells (
-            TableNumber INTEGER
-            ,ImageNumber INTEGER
-            ,ObjectNumber INTEGER
-            ,CellsData INTEGER
-            );
-            """,
-            "drop table if exists Nuclei;",
-            """
-            create table Nuclei (
-            TableNumber INTEGER
-            ,ImageNumber INTEGER
-            ,ObjectNumber INTEGER
-            ,NucleiData INTEGER
-            );
-            """,
-            "drop table if exists Cytoplasm;",
-            """
-            create table Cytoplasm (
-            TableNumber INTEGER
-            ,ImageNumber INTEGER
-            ,ObjectNumber INTEGER
-            ,Cytoplasm_Parent_Cells INTEGER
-            ,Cytoplasm_Parent_Nuclei INTEGER
-            ,CytoplasmData INTEGER
-            );
-            """,
-        ]
-
-        with engine.begin() as connection:
-            for stmt in create_stmts:
-                connection.execute(stmt)
-
-            # images
-            connection.execute(
-                "INSERT INTO Image VALUES (?, ?, ?, ?);",
-                [1, 1, 1, "123-123"],
-            )
-            connection.execute(
-                "INSERT INTO Image VALUES (?, ?, ?, ?);",
-                [2, 2, 2, "123-123"],
-            )
-
-            # cells
-            connection.execute(
-                "INSERT INTO Cells VALUES (?, ?, ?, ?);",
-                [1, 1, 2, 1],
-            )
-            connection.execute(
-                "INSERT INTO Cells VALUES (?, ?, ?, ?);",
-                [2, 2, 3, 1],
-            )
-
-            # Nuclei
-            connection.execute(
-                "INSERT INTO Nuclei VALUES (?, ?, ?, ?);",
-                [1, 1, 4, 1],
-            )
-            connection.execute(
-                "INSERT INTO Nuclei VALUES (?, ?, ?, ?);",
-                [2, 2, 5, 1],
-            )
-
-            # cytoplasm
-            connection.execute(
-                "INSERT INTO Cytoplasm VALUES (?, ?, ?, ?, ?, ?);",
-                [1, 1, 6, 2, 4, 1],
-            )
-            connection.execute(
-                "INSERT INTO Cytoplasm VALUES (?, ?, ?, ?, ?, ?);",
-                [2, 2, 7, 3, 5, 1],
-            )
-
-        return engine
+    sql_path = "testing_err_fixed_SQ00014613.sqlite"
+    sql_url = f"sqlite:///{sql_path}"
 
     @task
     def engine_from_str(sql_engine: str) -> Engine:
@@ -179,7 +74,7 @@ if __name__ == "__main__":
         # create column list for return result
         table_list = []
 
-        with engine_from_str.run(engine).connect() as connection:
+        with engine.connect() as connection:
             if table_name is None:
                 # if no table name is provided, we assume all tables must be scanned
                 table_list = connection.execute(
@@ -221,11 +116,9 @@ if __name__ == "__main__":
         # create column list for return result
         column_list = []
 
-        tables_list = collect_sql_tables.run(
-            engine=engine_from_str.run(engine), table_name=table_name
-        )
+        tables_list = collect_sql_tables(engine=engine, table_name=table_name)
 
-        with engine_from_str.run(engine).connect() as connection:
+        with engine.connect() as connection:
             for table in tables_list:
 
                 # if no column name is specified we will focus on all columns within the table
@@ -252,22 +145,27 @@ if __name__ == "__main__":
 
         return column_list
 
-    @task
+    @flow(task_runner=ConcurrentTaskRunner())
     def sql_select_distinct_join_basis(
         engine, table_name: str, join_keys: List[str], chunk_size: int
     ) -> list:
+
         join_keys_str = ", ".join(join_keys)
+
         sql_stmt = f"""
         select distinct {join_keys_str} from {table_name}
         """
+
         basis_dicts = pd.read_sql(
             sql_stmt,
-            engine_from_str.run(engine),
+            engine_from_str(engine).result(),
         ).to_dict(orient="records")
+
         chunked_basis_dicts = [
             basis_dicts[i : i + chunk_size]
             for i in range(0, len(basis_dicts), chunk_size)
         ]
+
         return chunked_basis_dicts
 
     @task
@@ -299,8 +197,8 @@ if __name__ == "__main__":
         if prepend_tablename_to_cols:
             colnames = [
                 coldata["column_name"]
-                for coldata in collect_sql_columns.run(
-                    engine=engine_from_str.run(engine), table_name=table_name
+                for coldata in collect_sql_columns(
+                    engine=engine_from_str(engine), table_name=table_name
                 )
             ]
             colstring = ",".join(
@@ -331,7 +229,7 @@ if __name__ == "__main__":
             )
             sql_stmt += f" where {basis_dict_str}"
 
-        return pd.read_sql(sql_stmt, engine_from_str.run(engine))
+        return pd.read_sql(sql_stmt, engine_from_str(engine))
 
     @task
     def df_name_prepend_column_rename(
@@ -415,41 +313,15 @@ if __name__ == "__main__":
         return fill_into
 
     @task
-    def table_concatenator(
-        engine,
-        table_list,
-        prepend_tablename_to_cols: bool,
-        avoid_prepend_for: list,
-        basis_list_dicts: list,
-    ):
-        concatted = pd.DataFrame()
-        for table in table_list:
-            to_concat = sql_table_to_pl_dataframe.run(
-                engine=engine_from_str.run(engine),
-                table_name=table["table_name"],
-                prepend_tablename_to_cols=prepend_tablename_to_cols,
-                avoid_prepend_for=avoid_prepend_for,
-                basis_list_dicts=basis_list_dicts,
-            )
-            if len(concatted) == 0:
-                concatted = to_concat
-            else:
-                concatted = nan_data_fill.run(fill_into=concatted, fill_from=to_concat)
-                to_concat = nan_data_fill.run(fill_into=to_concat, fill_from=concatted)
-                concatted = pd.concat([concatted, to_concat])
-
-        return concatted
-
-    @task
-    def _to_parquet(df: pd.DataFrame, filename: str) -> str:
+    def to_unique_parquet(df: pd.DataFrame, filename: str) -> str:
         file_uuid = str(uuid.uuid4().hex)
         filename_uuid = f"{filename}-{file_uuid}.parquet"
-        df.to_parquet(filename_uuid)
+        df.to_parquet(filename_uuid, compression=None)
         return filename_uuid
 
     @task
     def multi_to_single_parquet(
-        pq_files: str,
+        pq_files: list,
         filename: str,
     ):
         full_filename = f"{filename}.parquet"
@@ -466,14 +338,85 @@ if __name__ == "__main__":
 
         return full_filename
 
-    def run_workflow(
+    @flow(task_runner=ConcurrentTaskRunner())
+    def flow_chunked_table_concat_to_parquet(
+        engine,
+        table_list,
+        prepend_tablename_to_cols: bool,
+        avoid_prepend_for: list,
+        basis_list_dicts: list,
+        filename: str,
+    ):
+        concatted = pd.DataFrame()
+        for table in table_list:
+            to_concat = sql_table_to_pl_dataframe(
+                engine=engine_from_str(engine),
+                table_name=table["table_name"],
+                prepend_tablename_to_cols=prepend_tablename_to_cols,
+                avoid_prepend_for=avoid_prepend_for,
+                basis_list_dicts=basis_list_dicts,
+            )
+            if len(concatted) == 0:
+                concatted = to_concat
+            else:
+                concatted = nan_data_fill(fill_into=concatted, fill_from=to_concat)
+                to_concat = nan_data_fill(fill_into=to_concat, fill_from=concatted)
+                concatted = pd.concat([concatted, to_concat])
+
+        filename_uuid = to_unique_parquet(df=concatted, filename=filename)
+
+        return filename_uuid
+
+    @flow(task_runner=ConcurrentTaskRunner())
+    def flow_reduce_tables_to_single_parquet(
+        engine, basis, join_keys, chunk_size, filename
+    ):
+
+        # chunk the dicts so as to create batches
+        basis_dicts = sql_select_distinct_join_basis(
+            engine=engine,
+            table_name=basis,
+            join_keys=join_keys,
+            chunk_size=chunk_size,
+        )
+
+        engine = engine_from_str(engine)
+
+        # gather sql tables for concat
+        table_list = collect_sql_tables(engine=engine, wait_for=[engine])
+
+        pq_files = []
+        print(basis_dicts.result())
+        for basis_dict in basis_dicts.result():
+            pq_files.append(
+                flow_chunked_table_concat_to_parquet(
+                    engine=engine,
+                    table_list=table_list,
+                    prepend_tablename_to_cols=True,
+                    avoid_prepend_for=join_keys,
+                    basis_list_dicts=basis_dict,
+                    filename=filename,
+                    wait_for=[
+                        engine,
+                        basis_dicts,
+                        table_list,
+                    ],
+                )
+            )
+
+        reduced_pq_result = multi_to_single_parquet(
+            pq_files=pq_files, filename=filename
+        )
+
+        return reduced_pq_result
+
+    def convert_sqlite_to_parquet(
         engine: Engine,
-        executor: Executor = None,
-        basis: str = None,
-        compartments: List[str] = None,
-        join_keys: List[str] = None,
-        chunk_size: int = 50,
-        filename: str = None,
+        basis: str,
+        compartments: List[str],
+        join_keys: List[str],
+        chunk_size: int,
+        filename: str,
     ) -> pd.DataFrame:
         """
         Create merged dataset for cytomining efforts.
@@ -497,87 +440,34 @@ if __name__ == "__main__":
         pd.DataFrame
             Single merged dataset from compartments provided.
         """
-        if not executor:
-            executor = LocalExecutor()
-
-        if not basis:
-            basis = "image"
-
-        # set default join_key
-        if not join_keys:
-            join_keys = ["TableNumber", "ImageNumber"]
-
-        # set default compartments
-        if not compartments:
-            compartments = ["Cells", "Cytoplasm", "Nuclei"]
 
         # collect table data if we haven't already
         # if len(pandas_data) == 0:
         #   pandas_data = collect_pandas_dataframes()
 
-        with Flow("to parquet", storage=Local(), result=LocalResult()) as flow:
-
-            param_engine = Parameter("engine", default="")
-            param_basis = Parameter("basis", default="image")
-            param_join_keys = Parameter(
-                "join_keys", default=["TableNumber", "ImageNumber"]
-            )
-            param_chunk_size = Parameter("chunk_size", default=20)
-            param_filename = Parameter("filename", default="example")
-
-            # chunk the dicts so as to create batches
-            basis_dicts = sql_select_distinct_join_basis(
-                engine=param_engine,
-                table_name=param_basis,
-                join_keys=param_join_keys,
-                chunk_size=param_chunk_size,
-            )
-
-            # gather sql tables for concat
-            table_list = collect_sql_tables(engine=param_engine)
-
-            # map to gather our concatted/merged pd dataframes
-            df_concat = table_concatenator.map(
-                engine=unmapped(param_engine),
-                table_list=unmapped(table_list),
-                prepend_tablename_to_cols=unmapped(True),
-                avoid_prepend_for=unmapped(param_join_keys),
-                basis_list_dicts=basis_dicts,
-            )
-
-            # map to convert from pd dataframes to arrow tables for pq writing
-            pq_files = _to_parquet.map(df=df_concat, filename=unmapped(param_filename))
-
-            # reduce to single pq file
-            reduced_pq_result = multi_to_single_parquet(
-                pq_files=pq_files, filename=param_filename
-            )
-
-        state = flow.run(
-            executor=executor,
-            parameters=dict(
+        if __name__ == "__main__":
+            filepath = flow_reduce_tables_to_single_parquet(
                 engine=engine,
                 basis=basis,
                 join_keys=join_keys,
                 chunk_size=chunk_size,
                 filename=filename,
-            ),
-        )
+            )
 
-        print(state.result[reduced_pq_result].result)
-
-        return
+        return filepath
 
     print("\nFinal result\n")
-    for filename in glob.glob("./data/example*"):
+    for filename in glob.glob("./data/*"):
         os.remove(filename)
-    executor = DaskExecutor()
+
     print(
-        run_workflow(
-            engine=str(database_engine_for_testing().url),
-            executor=executor,
-            filename="./data/example",
-            chunk_size=1,
+        convert_sqlite_to_parquet(
+            engine=sql_url,
+            basis="image",
+            compartments=["Cells", "Cytoplasm", "Nuclei"],
+            join_keys=["TableNumber", "ImageNumber"],
+            filename="./data/testing",
+            chunk_size=15,
         )
     )
-    print(pd.read_parquet("./data/example.parquet"))
+    print(pl.read_parquet("./data/testing.parquet"))
