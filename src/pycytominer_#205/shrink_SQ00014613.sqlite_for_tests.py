@@ -20,7 +20,8 @@ sqlite_conn = sqlite3.connect(sqlite_target)
 delete_statement = """
 DELETE FROM Image 
 WHERE TableNumber NOT IN 
-('dd77885d07028e67dc9bcaaba4df34c6')
+('dd77885d07028e67dc9bcaaba4df34c6',
+'1e5d8facac7508cfd4086f3e3e950182')
 """
 sqlite_conn.execute(delete_statement)
 sqlite_conn.commit()
